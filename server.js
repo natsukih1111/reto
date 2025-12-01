@@ -1,5 +1,7 @@
 // file: server.js
 import http from "http";
+import express from "express";
+import cors from "cors";
 import { Server } from "socket.io";
 import db from "./lib/db.js";
 import { addBerriesByUserId } from "./lib/berries.js";
@@ -9,23 +11,41 @@ const PORT = process.env.PORT || 4000;
 // ★ 現在接続中のソケット数
 let onlineCount = 0;
 
-// socket.ioサーバー
-const httpServer = http.createServer((req, res) => {
-  // ▼ オンライン人数を返すシンプルなHTTPエンドポイント
-  if (req.url === "/online-count") {
-    const body = JSON.stringify({ count: onlineCount });
+// =========================
+//  Express アプリ本体
+// =========================
+const app = express();
 
-    res.statusCode = 200;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(body);
-    return;
-  }
+// JSON ボディを受け取れるようにする
+app.use(express.json());
 
-  // それ以外のパスは 404
-  res.statusCode = 404;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.end("Not Found");
+// 開発中だし雑に全部許可でOK（必要ならあとで origin 絞る）
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
+
+// ▼ ここが今までの `/online-count` 相当
+app.get("/online-count", (req, res) => {
+  res.json({ count: onlineCount });
 });
+
+// ▼ テスト用の簡単なAPI（あとで見に行けるように）
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
+});
+
+// それ以外は 404
+app.use((req, res) => {
+  res.status(404).send("Not Found");
+});
+
+// =========================
+//  HTTPサーバー + Socket.IO
+// =========================
+const httpServer = http.createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
@@ -34,6 +54,12 @@ const io = new Server(httpServer, {
     credentials: true,
   },
 });
+
+// ★ この下は、今あなたが書いてある
+//   getRankName／rateQueue／io.on('connection'...) など
+//   既存のコードをそのまま残してOK
+//   （httpServer の定義だけ上の Express 用に変えたイメージ）
+
 
 // ★ レートから称号を決める（lib/db.js と同じロジック）
 function getRankName(rating) {
