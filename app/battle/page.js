@@ -8,19 +8,11 @@ export default function BattlePage() {
   return (
     <Suspense
       fallback={
-        <div
-          style={{
-            minHeight: '100vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: '#f4f7fb',
-            color: '#222',
-            fontSize: '16px',
-          }}
-        >
-          読み込み中…
-        </div>
+        <main className="min-h-screen bg-sky-50 text-sky-900 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow px-6 py-4 text-center">
+            対戦画面を読み込み中…
+          </div>
+        </main>
       }
     >
       <BattlePageInner />

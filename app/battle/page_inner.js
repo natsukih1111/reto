@@ -303,11 +303,14 @@ function BattlePageInner() {
     if (!roomId) return;
     if (!me) return;
 
+
 if (!socket) {
-  // .env.local で設定した URL
-  const SOCKET_URL =
-    process.env.NEXT_PUBLIC_SOCKET_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '');
+  const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+
+  if (!SOCKET_URL) {
+    console.error('NEXT_PUBLIC_SOCKET_URL is not set');
+    return;
+  }
 
   socket = io(SOCKET_URL, {
     transports: ['websocket', 'polling'],

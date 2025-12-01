@@ -52,44 +52,26 @@ function ReteBattlePageInner() {
   // ソケット初期化
   useEffect(() => {
     if (!roomId) return;
-if (!socket) {
-  const SOCKET_URL =
-    process.env.NEXT_PUBLIC_SOCKET_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '');
+// ソケット初期化
+useEffect(() => {
+  if (!roomId) return;
 
-  socket = io(SOCKET_URL, {
-    transports: ['websocket', 'polling'],
+  if (!socket) {
+    const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+
+    if (!SOCKET_URL) {
+      console.error('NEXT_PUBLIC_SOCKET_URL is not set');
+      return;
+    }
+
+    socket = io(SOCKET_URL, {
+      transports: ['websocket', 'polling'],
+    });
+  }
+
+  socket.on('connect', () => {
+    console.log('battle socket connected', socket.id);
   });
-}
-
-
-    socket.on('connect', () => {
-      console.log('battle socket connected', socket.id);
-    });
-
-    socket.on('rate:result-finalized', (payload) => {
-      setResult(payload);
-      setFinished(true);
-      setSending(false);
-    });
-
-    socket.on('rate:result-waiting', () => {
-      setSending(true);
-      addLog('相手の結果送信待ちです…');
-    });
-
-    socket.on('rate:error', (payload) => {
-      setSending(false);
-      addLog(payload?.message || 'エラーが発生しました');
-    });
-
-    return () => {
-      if (socket) {
-        socket.off('rate:result-finalized');
-        socket.off('rate:result-waiting');
-        socket.off('rate:error');
-      }
-    };
   }, [roomId]);
 
   // 問題取得
