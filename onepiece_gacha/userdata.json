@@ -1,0 +1,72 @@
+﻿{
+    "Berry":  0,
+    "Characters":  [
+                       {
+                           "Id":  1289,
+                           "Name":  "さらへび先生",
+                           "Rarity":  1,
+                           "Stars":  1
+                       },
+                       {
+                           "Id":  558,
+                           "Name":  "ボア・サンダーソニア",
+                           "Rarity":  3,
+                           "Stars":  3
+                       },
+                       {
+                           "Id":  269,
+                           "Name":  "ロックスター",
+                           "Rarity":  2,
+                           "Stars":  2
+                       },
+                       {
+                           "Id":  1268,
+                           "Name":  "浦島",
+                           "Rarity":  2,
+                           "Stars":  2
+                       },
+                       {
+                           "Id":  191,
+                           "Name":  "おかめ",
+                           "Rarity":  1,
+                           "Stars":  1
+                       },
+                       {
+                           "Id":  1346,
+                           "Name":  "雷刃",
+                           "Rarity":  2,
+                           "Stars":  2
+                       },
+                       {
+                           "Id":  144,
+                           "Name":  "ブロギー",
+                           "Rarity":  5,
+                           "Stars":  5
+                       },
+                       {
+                           "Id":  743,
+                           "Name":  "メロ",
+                           "Rarity":  2,
+                           "Stars":  2
+                       },
+                       {
+                           "Id":  801,
+                           "Name":  "瓢箪フェン・ボック",
+                           "Rarity":  1,
+                           "Stars":  1
+                       },
+                       {
+                           "Id":  93,
+                           "Name":  "ネズミ",
+                           "Rarity":  3,
+                           "Stars":  3
+                       }
+                   ],
+    "MyTeam":  [
+                   144,
+                   191,
+                   269,
+                   558,
+                   1268
+               ]
+}

@@ -1,0 +1,82 @@
+import Database from "better-sqlite3";
+
+const db = new Database("quiz.db");
+
+// QUESTIONS
+try {
+  db.prepare(ALTER TABLE questions ADD COLUMN status TEXT DEFAULT 'pending').run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE questions ADD COLUMN question_type TEXT DEFAULT 'choice').run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE questions ADD COLUMN tags TEXT DEFAULT '[]').run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE questions ADD COLUMN correct_answers TEXT DEFAULT '[]').run();
+} catch {}
+
+
+// USERS
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN games_played INTEGER DEFAULT 0).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN max_win_streak INTEGER DEFAULT 0).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN berry INTEGER DEFAULT 500).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN is_creator INTEGER DEFAULT 0).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN twitter_id TEXT).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN icon_url TEXT).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE users ADD COLUMN profile TEXT).run();
+} catch {}
+
+
+// MATCHES
+try {
+  db.prepare(ALTER TABLE matches ADD COLUMN score_user1 INTEGER).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE matches ADD COLUMN score_user2 INTEGER).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE matches ADD COLUMN time_ms_user1 INTEGER).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE matches ADD COLUMN time_ms_user2 INTEGER).run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE matches ADD COLUMN mode TEXT DEFAULT 'rate').run();
+} catch {}
+
+try {
+  db.prepare(ALTER TABLE matches ADD COLUMN room_id TEXT).run();
+} catch {}
+
+console.log("ALTER TABLE completed!");

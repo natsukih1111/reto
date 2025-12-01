@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./quiz.db"
+}
+
+/// --- ユーザー（既にある前提で最低限） ---
+model User {
+  id        Int    @id @default(autoincrement())
+  name      String
+  // ここに既存のUser項目がある場合は後で移植する
+
+  ChallengeAttempt      ChallengeAttempt[]
+  ChallengeSeasonRecord ChallengeSeasonRecord[]
+  ChallengeAllTimeRecord ChallengeAllTimeRecord[]
+}
+
+/// ================================
+/// チャレンジモード：挑戦ログ
+/// ================================
+model ChallengeAttempt {
+  id           Int      @id @default(autoincrement())
+
+  user         User     @relation(fields: [userId], references: [id])
+  userId       Int
+
+  seasonId     Int?
+  correctCount Int      @default(0)
+  missCount    Int      @default(0)
+
+  startedAt    DateTime @default(now())
+  finishedAt   DateTime?
+  status       String   @default("finished")
+
+  berriesGiven Boolean  @default(false)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, startedAt])
+}
+
+/// ================================
+/// チャレンジモード：シーズン最高記録
+/// ================================
+model ChallengeSeasonRecord {
+  id          Int      @id @default(autoincrement())
+
+  user        User     @relation(fields: [userId], references: [id])
+  userId      Int
+
+  seasonId    Int
+  bestCorrect Int
+  bestMiss    Int
+  bestAt      DateTime @default(now())
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, seasonId])
+}
+
+/// ================================
+/// チャレンジモード：歴代最高記録
+/// ================================
+model ChallengeAllTimeRecord {
+  id          Int      @id @default(autoincrement())
+
+  user        User     @relation(fields: [userId], references: [id])
+  userId      Int
+
+  bestCorrect Int
+  bestMiss    Int
+  bestAt      DateTime @default(now())
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId])
+}
