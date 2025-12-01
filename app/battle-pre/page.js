@@ -1,10 +1,12 @@
 // file: app/battle-pre/page.js
 'use client';
 
+import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function BattlePrePage() {
+// 中身本体
+function BattlePrePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -89,5 +91,22 @@ export default function BattlePrePage() {
         </div>
       </div>
     </main>
+  );
+}
+
+// 外側ラッパ（Suspenseで包む）
+export default function BattlePrePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-slate-900 text-sky-50 flex items-center justify-center px-4">
+          <div className="bg-slate-800 rounded-2xl shadow-lg px-6 py-4 text-center border border-sky-500/40">
+            対戦準備画面を読み込み中…
+          </div>
+        </main>
+      }
+    >
+      <BattlePrePageInner />
+    </Suspense>
   );
 }
