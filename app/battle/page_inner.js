@@ -1,7 +1,7 @@
 // file: app/battle/page.js
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import io from 'socket.io-client';
 import QuestionReviewAndReport from '@/components/QuestionReviewAndReport';
@@ -93,7 +93,7 @@ function getQuestionType(q) {
   return q?.type || 'single';
 }
 
-export default function BattlePage() {
+function BattlePageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const roomId = searchParams.get('room') || 'default';
@@ -1135,5 +1135,22 @@ if (!socket) {
         </section>
       )}
     </main>
+  );
+}
+// 一番下に追加
+
+export default function BattlePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-sky-50 text-sky-900 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow px-6 py-4 text-center">
+            対戦画面を読み込み中…
+          </div>
+        </main>
+      }
+    >
+      <BattlePageInner />
+    </Suspense>
   );
 }
