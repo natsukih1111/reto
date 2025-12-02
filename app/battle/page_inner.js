@@ -212,12 +212,16 @@ function BattlePageInner() {
 
         // ③ battle用に整形
         const normalized = picked.map((q, idx) => {
+          // --- 選択肢を options / options_json から取り出す ---
           let options = [];
           try {
             if (Array.isArray(q.options)) {
               options = q.options;
-            } else if (q.options_json) {
-              options = JSON.parse(q.options_json);
+            } else if (Array.isArray(q.options_json)) {
+              options = q.options_json;
+            } else if (typeof q.options_json === 'string') {
+              const parsed = JSON.parse(q.options_json);
+              if (Array.isArray(parsed)) options = parsed;
             }
           } catch {
             options = [];
@@ -226,42 +230,92 @@ function BattlePageInner() {
           const text = q.question_text || q.question || '';
           const answer = q.correct_answer ?? '';
 
+          // --- altAnswers を正規化 ---
           let altAnswers = [];
           try {
             if (Array.isArray(q.altAnswers)) {
               altAnswers = q.altAnswers;
-            } else if (q.alt_answers_json) {
+            } else if (Array.isArray(q.alt_answers_json)) {
+              altAnswers = q.alt_answers_json;
+            } else if (typeof q.alt_answers_json === 'string') {
               const parsed = JSON.parse(q.alt_answers_json);
-              if (Array.isArray(parsed)) {
-                altAnswers = parsed;
-              }
+              if (Array.isArray(parsed)) altAnswers = parsed;
             }
           } catch {
             altAnswers = [];
           }
 
-          let type = 'single';
+          // --- 問題タイプ判定：DB の type を優先 ---
           const answerList = parseCorrectValues(answer);
+          const rawType = (q.type || '').toString().toLowerCase();
 
+          let type = 'single';
+
+          // 選択肢が無ければ問答無用で記述
           if (!options || options.length === 0) {
             type = 'text';
-          } else if (answerList.length > 1) {
-            const t = text.replace(/\s/g, '');
-            if (t.includes('順') || t.includes('並べ') || t.includes('順番')) {
+          } else if (rawType) {
+            // DBの type カラムを素直に解釈
+            if (
+              rawType.includes('order') ||
+              rawType.includes('ordering') ||
+              rawType.includes('並') ||
+              rawType.includes('順')
+            ) {
               type = 'ordering';
-            } else {
+            } else if (
+              rawType.includes('multi') ||
+              rawType.includes('multiple') ||
+              rawType.includes('checkbox') ||
+              rawType.includes('複数')
+            ) {
               type = 'multi';
+            } else if (
+              rawType.includes('text') ||
+              rawType.includes('written') ||
+              rawType.includes('記述')
+            ) {
+              type = 'text';
+            } else if (
+              rawType.includes('single') ||
+              rawType.includes('radio') ||
+              rawType.includes('単一') ||
+              rawType.includes('一択')
+            ) {
+              type = 'single';
+            } else {
+              // よく分からない値だったとき用のフォールバック
+              if (answerList.length > 1) {
+                const t = text.replace(/\s/g, '');
+                if (t.includes('順') || t.includes('並べ') || t.includes('順番')) {
+                  type = 'ordering';
+                } else {
+                  type = 'multi';
+                }
+              } else {
+                type = 'single';
+              }
             }
           } else {
-            type = 'single';
+            // rawType 自体が無い場合のフォールバック（元のロジック）
+            if (answerList.length > 1) {
+              const t = text.replace(/\s/g, '');
+              if (t.includes('順') || t.includes('並べ') || t.includes('順番')) {
+                type = 'ordering';
+              } else {
+                type = 'multi';
+              }
+            } else {
+              type = 'single';
+            }
           }
 
+          // --- 選択肢を roomId ベースで決定的にシャッフル ---
           if (options && options.length > 0) {
             const optSeed = `${roomId}-q-${q.id ?? idx}`;
             options = shuffleDeterministic(options, optSeed);
           }
 
-          // ★ ここで id は question_submissions.id をそのまま持ってくる想定
           return { id: q.id ?? idx, text, type, options, answer, altAnswers };
         });
 
@@ -303,20 +357,26 @@ function BattlePageInner() {
     if (!roomId) return;
     if (!me) return;
 
+    // ★ ここを書き換え
+    if (!socket) {
+      let SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
-if (!socket) {
-  const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+      // 環境変数が無いときはローカル用のデフォルトにフォールバック
+      if (!SOCKET_URL && typeof window !== 'undefined') {
+        const host = window.location.hostname;
+        const protocol = window.location.protocol; // http: or https:
+        SOCKET_URL = `${protocol}//${host}:4000`;
+      }
 
-  if (!SOCKET_URL) {
-    console.error('NEXT_PUBLIC_SOCKET_URL is not set');
-    return;
-  }
+      if (!SOCKET_URL) {
+        console.error('SOCKET_URL could not be resolved');
+        return;
+      }
 
-  socket = io(SOCKET_URL, {
-    transports: ['websocket', 'polling'],
-  });
-}
-
+      socket = io(SOCKET_URL, {
+        transports: ['websocket', 'polling'],
+      });
+    }
 
     const s = socket;
 

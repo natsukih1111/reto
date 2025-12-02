@@ -1,6 +1,6 @@
-// app/api/check-duplicate/route.js
-import { NextResponse } from "next/server";
-import db from "@/lib/db";
+// file: app/api/check-duplicate/route.js
+import { NextResponse } from 'next/server';
+import db from '@/lib/db.js';
 
 /**
  * 類似問題チェック API
@@ -20,13 +20,13 @@ export async function POST(req) {
       submissionId,
     } = body || {};
 
-    const correctAnswer = rawCorrectAnswer || answer || "";
+    const correctAnswer = rawCorrectAnswer || answer || '';
 
     // 文字列正規化（空白と句読点を削るだけの簡易版）
     const normalizeText = (s) =>
-      (s || "")
-        .replace(/\s+/g, "")
-        .replace(/[。、．，,.、]/g, "");
+      (s || '')
+        .replace(/\s+/g, '')
+        .replace(/[。、．，,.、]/g, '');
 
     // 「順番無視で7割一致」をざっくり見るための類似度
     const textSimilarity = (a, b) => {
@@ -56,24 +56,23 @@ export async function POST(req) {
     // 選択肢の正規化（順番無視で比較）
     const normalizeOptions = (opts) =>
       (opts || [])
-        .map((o) => (o || "").trim())
+        .map((o) => (o || '').trim())
         .filter((o) => o)
         .sort();
 
-    const thisOptionsKey = normalizeOptions(options).join("|");
-    const questionText = question || "";
+    const thisOptionsKey = normalizeOptions(options).join('|');
+    const questionText = question || '';
 
-    // DB から questions + question_submissions をまとめて取得
-    const rows = db
-      .prepare(
-        `
+    // DB から questions + question_submissions をまとめて取得（Supabase / Postgres）
+    const rows = await db.query(
+      `
         SELECT
           id,
           question_text,
           question,
           correct_answer,
-          answer,
-          options_json,
+          NULL AS answer,                 -- questions 側には answer カラムが無いので NULL
+          options_json::text AS options_json,  -- ★ 型を text にそろえる
           status,
           'questions' AS source
         FROM questions
@@ -85,34 +84,41 @@ export async function POST(req) {
           question,
           correct_answer,
           answer,
-          options_json,
+          options_json::text AS options_json,  -- ★ こちらも text にキャスト
           status,
           'question_submissions' AS source
         FROM question_submissions
         WHERE status = 'pending'
-        `
-      )
-      .all();
+      `,
+      []
+    );
 
     const duplicates = [];
 
     for (const row of rows) {
-      const qText = row.question_text || row.question || "";
-      const candAnswer = row.correct_answer || row.answer || "";
+      const qText = row.question_text || row.question || '';
+      const candAnswer = row.correct_answer || row.answer || '';
+
       let candOptions = [];
 
+      // options_json は text になっているので、必要なら JSON.parse する
       if (row.options_json) {
-        try {
-          candOptions = JSON.parse(row.options_json);
-        } catch (e) {
-          candOptions = [];
+        if (Array.isArray(row.options_json)) {
+          candOptions = row.options_json;
+        } else if (typeof row.options_json === 'string') {
+          try {
+            const parsed = JSON.parse(row.options_json);
+            if (Array.isArray(parsed)) candOptions = parsed;
+          } catch (e) {
+            candOptions = [];
+          }
         }
       }
 
       // 投稿中の自分自身は除外
       if (
         submissionId &&
-        row.source === "question_submissions" &&
+        row.source === 'question_submissions' &&
         row.id === submissionId
       ) {
         continue;
@@ -131,10 +137,10 @@ export async function POST(req) {
       if (thisOptionsKey && candOptions && candOptions.length > 0) {
         const candKey = candOptions
           .slice()
-          .map((o) => (o || "").trim())
+          .map((o) => (o || '').trim())
           .filter((o) => o)
           .sort()
-          .join("|");
+          .join('|');
         cond2 =
           !!candKey &&
           !!thisOptionsKey &&
@@ -164,9 +170,9 @@ export async function POST(req) {
     for (const d of duplicates) {
       const key =
         normalizeText(d.question_text) +
-        "||" +
-        (d.correct_answer || "") +
-        "||" +
+        '||' +
+        (d.correct_answer || '') +
+        '||' +
         d.source;
       if (!uniqMap.has(key)) {
         uniqMap.set(key, d); // 最初の1件だけ残す
@@ -177,9 +183,9 @@ export async function POST(req) {
 
     return NextResponse.json({ ok: true, duplicates: uniqueDuplicates });
   } catch (err) {
-    console.error("check-duplicate error", err);
+    console.error('check-duplicate error', err);
     return NextResponse.json(
-      { ok: false, error: "Internal Server Error" },
+      { ok: false, error: 'Internal Server Error' },
       { status: 500 }
     );
   }

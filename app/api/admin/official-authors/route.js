@@ -2,12 +2,17 @@
 import { NextResponse } from 'next/server';
 import db from '@/lib/db.js';
 
+// db.query が配列 or { rows } どちらでも動くようにするヘルパー
+async function queryRows(sql, params = []) {
+  const res = await db.query(sql, params);
+  return Array.isArray(res) ? res : res.rows;
+}
+
 // 公認作問者一覧取得
 export async function GET() {
   try {
-    const rows = db
-      .prepare(
-        `
+    const rows = await queryRows(
+      `
         SELECT
           id,
           username,
@@ -20,10 +25,9 @@ export async function GET() {
         WHERE is_official_author = 1
         ORDER BY id ASC
       `
-      )
-      .all();
+    );
 
-    return NextResponse.json({ authors: rows });
+    return NextResponse.json({ authors: rows }, { status: 200 });
   } catch (err) {
     console.error('GET /api/admin/official-authors error:', err);
     return NextResponse.json(
@@ -36,33 +40,44 @@ export async function GET() {
 // 公認作問者の解除（公認ではなくす）
 export async function POST(request) {
   try {
-    const body = await request.json();
-    const userId = body.userId;
+    const body = await request.json().catch(() => ({}));
 
-    if (!userId) {
+    // userId / user_id のどっちでも受ける
+    const rawId = body.userId ?? body.user_id;
+    const userId = rawId ? Number(rawId) : NaN;
+
+    if (!rawId || Number.isNaN(userId)) {
       return NextResponse.json(
         { error: 'userId が指定されていません' },
         { status: 400 }
       );
     }
 
-    const stmt = db.prepare(
+    const res = await db.query(
       `
-      UPDATE users
-      SET is_official_author = 0
-      WHERE id = ?
-    `
+        UPDATE users
+        SET is_official_author = 0
+        WHERE id = $1
+      `,
+      [userId]
     );
-    const info = stmt.run(userId);
 
-    if (info.changes === 0) {
+    // pg クライアント想定：rowCount があればそれを使う
+    const affected =
+      typeof res.rowCount === 'number'
+        ? res.rowCount
+        : Array.isArray(res)
+        ? res.length
+        : 0;
+
+    if (affected === 0) {
       return NextResponse.json(
         { error: '指定されたユーザーが見つかりません' },
         { status: 404 }
       );
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err) {
     console.error('POST /api/admin/official-authors error:', err);
     return NextResponse.json(

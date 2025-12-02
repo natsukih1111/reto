@@ -3,7 +3,8 @@ import db from '@/lib/db.js';
 
 // 詳細取得: GET /api/my-questions/[id]
 export async function GET(_req, context) {
-  const { id: idStr } = await context.params; // ★ params を await
+  // ★ params は Promise なので await 必須
+  const { id: idStr } = await context.params;
   const id = Number(idStr);
 
   if (!Number.isInteger(id)) {
@@ -13,9 +14,8 @@ export async function GET(_req, context) {
     });
   }
 
-  const row = db
-    .prepare(
-      `
+  const row = await db.get(
+    `
       SELECT
         id,
         type,
@@ -30,10 +30,10 @@ export async function GET(_req, context) {
         alt_answers_json,
         tags_json
       FROM question_submissions
-      WHERE id = ?
-    `
-    )
-    .get(id);
+      WHERE id = $1
+    `,
+    [id]
+  );
 
   if (!row) {
     return new Response(JSON.stringify({ error: 'not_found' }), {
@@ -79,7 +79,8 @@ export async function GET(_req, context) {
 
 // 投稿キャンセル: DELETE /api/my-questions/[id]
 export async function DELETE(_req, context) {
-  const { id: idStr } = await context.params; // ★ ここも await
+  // ★ こっちも await 必須
+  const { id: idStr } = await context.params;
   const id = Number(idStr);
 
   if (!Number.isInteger(id)) {
@@ -89,9 +90,10 @@ export async function DELETE(_req, context) {
     });
   }
 
-  const row = db
-    .prepare(`SELECT status FROM question_submissions WHERE id = ?`)
-    .get(id);
+  const row = await db.get(
+    `SELECT status FROM question_submissions WHERE id = $1`,
+    [id]
+  );
 
   if (!row) {
     return new Response(JSON.stringify({ error: 'not_found' }), {
@@ -110,7 +112,7 @@ export async function DELETE(_req, context) {
     );
   }
 
-  db.prepare(`DELETE FROM question_submissions WHERE id = ?`).run(id);
+  await db.run(`DELETE FROM question_submissions WHERE id = $1`, [id]);
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,

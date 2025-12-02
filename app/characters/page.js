@@ -87,6 +87,16 @@ function getRainbowInnerBg(stars) {
   return '';
 }
 
+// API からのオブジェクト → 星数/元レア度の共通取り出し
+function getStarsValue(ch) {
+  // API は stars で来ているが、念のため star もフォロー
+  return ch.stars ?? ch.star ?? 1;
+}
+function getBaseRarity(ch) {
+  // API は base_rarity で来ているが、過去互換で rarity も見る
+  return ch.base_rarity ?? ch.rarity ?? 1;
+}
+
 /* ============================================================
    ページ本体
 ============================================================ */
@@ -146,7 +156,11 @@ export default function CharactersPage() {
         const tj = await tR.json();
 
         setCharacters(cj.characters || []);
-        setTeamIds((tj.team || []).map((t) => t.character_id));
+        setTeamIds(
+          (tj.team || [])
+            .filter((t) => t && t.character_id != null)
+            .map((t) => t.character_id)
+        );
       } catch (e) {
         console.error(e);
       } finally {
@@ -208,7 +222,7 @@ export default function CharactersPage() {
   ------------------------------ */
   const sorted = [...characters].sort((a, b) => {
     if (sortMode === 'rarity') {
-      return b.star - a.star;
+      return getStarsValue(b) - getStarsValue(a);
     }
     if (sortMode === 'no') {
       return (a.char_no ?? a.character_id) - (b.char_no ?? b.character_id);
@@ -253,7 +267,7 @@ export default function CharactersPage() {
 
       <main className="w-full max-w-md px-4 pb-10 mt-4 space-y-6">
         {/* -------------------
-            マイチーム（★先に表示）
+            マイチーム
         ------------------- */}
         <section className="bg-sky-100 border border-sky-500 p-4 rounded-3xl">
           <h2 className="font-bold text-lg mb-3">マイチーム（最大5体）</h2>
@@ -284,7 +298,7 @@ export default function CharactersPage() {
                     <>
                       <div className="font-bold line-clamp-2">{ch.name}</div>
                       <div className="text-slate-600">
-                        R{ch.rarity} / ★{ch.star}
+                        R{getBaseRarity(ch)} / ★{getStarsValue(ch)}
                       </div>
                     </>
                   ) : (
@@ -354,7 +368,8 @@ export default function CharactersPage() {
           {/* キャラ一覧 */}
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {sorted.map((ch) => {
-              const { s, stars, sizeClass } = getStarVisual(ch.star);
+              const starValue = getStarsValue(ch);
+              const { s, stars, sizeClass } = getStarVisual(starValue);
               const selected = isSelected(ch.character_id);
 
               // ★6以上 → 虹枠専用
@@ -401,7 +416,7 @@ export default function CharactersPage() {
                             {stars}
                           </span>
                           <div className="text-[11px] text-right text-slate-600">
-                            <div>元レア度：{ch.rarity}</div>
+                            <div>元レア度：{getBaseRarity(ch)}</div>
                             <div>現在★：{s}</div>
                           </div>
                         </div>
@@ -439,7 +454,7 @@ export default function CharactersPage() {
                       {stars}
                     </span>
                     <div className="text-[11px] text-right text-slate-600">
-                      <div>元レア度：{ch.rarity}</div>
+                      <div>元レア度：{getBaseRarity(ch)}</div>
                       <div>現在★：{s}</div>
                     </div>
                   </div>

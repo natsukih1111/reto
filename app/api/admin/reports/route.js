@@ -5,9 +5,7 @@ import {
   updateQuestionReportForAdmin,
 } from '@/lib/reports.js';
 
-// ==============================
-// GET: /api/admin/reports?status=open|fixed|dismissed
-// ==============================
+// GET: /api/admin/reports?status=open|fixed|dismissed|all
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -15,7 +13,7 @@ export async function GET(request) {
     const limit = Number(searchParams.get('limit') || '100');
     const offset = Number(searchParams.get('offset') || '0');
 
-    const list = listQuestionReportsForAdmin({
+    const list = await listQuestionReportsForAdmin({
       statusKey,
       limit,
       offset,
@@ -45,10 +43,8 @@ export async function GET(request) {
   }
 }
 
-// ==============================
 // POST: /api/admin/reports
 // body: { id, status: 'open'|'fixed'|'dismissed', adminNote }
-// ==============================
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -61,7 +57,7 @@ export async function POST(request) {
       );
     }
 
-    const updated = updateQuestionReportForAdmin({
+    const updated = await updateQuestionReportForAdmin({
       id,
       statusKey: status,
       adminNote,

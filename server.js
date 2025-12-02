@@ -14,10 +14,7 @@ const PORT = process.env.PORT || 4000;
 // ------------------------------
 const app = express();
 
-// JSON を受け取れるように
 app.use(express.json());
-
-// CORS を許可
 app.use(
   cors({
     origin: true,
@@ -25,12 +22,12 @@ app.use(
   })
 );
 
-// ★ API 追加テスト：これが動くか確認する
+// ヘルスチェック
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
 
-// ★ 接続数を返す
+// 接続数
 let onlineCount = 0;
 app.get("/online-count", (req, res) => {
   res.json({ count: onlineCount });
@@ -54,14 +51,13 @@ const io = new Server(httpServer, {
   },
 });
 
+// --------------- 共通 ---------------
 
-// ★ この下は、今あなたが書いてある
-//   getRankName／rateQueue／io.on('connection'...) など
-//   既存のコードをそのまま残してOK
-//   （httpServer の定義だけ上の Express 用に変えたイメージ）
+function log(...args) {
+  console.log("[server]", ...args);
+}
 
-
-// ★ レートから称号を決める（lib/db.js と同じロジック）
+// レートから称号
 function getRankName(rating) {
   if (rating >= 1800) return "海賊王";
   if (rating >= 1750) return "四皇";
@@ -74,18 +70,10 @@ function getRankName(rating) {
 }
 
 // ========== レートマッチ用キュー ==========
-//
-// rateQueue の要素:
-// { socketId, name, rating, userId, joinedAt }
 const rateQueue = [];
 
 // ========== バトル用ルーム状態 ==========
-// rooms: Map<roomId, { players: Map<socketId, player>, answers: Map<qIndex, Map<socketId, {isCorrect,timeMs}>>, ... }>
 const rooms = new Map();
-
-function log(...args) {
-  console.log("[server]", ...args);
-}
 
 function removeFromRateQueue(socketId) {
   const idx = rateQueue.findIndex((p) => p.socketId === socketId);
@@ -95,20 +83,25 @@ function removeFromRateQueue(socketId) {
   }
 }
 
-// ========== DBヘルパー ==========
+// ========== DB ヘルパー（全部 Supabase 版） ==========
 
 // id でユーザー取得
-function getUserById(id) {
+async function getUserById(id) {
   if (!id) return null;
   try {
-    const stmt = db.prepare(
+    const row = await db.get(
       `
-      SELECT id, username, display_name, rating, internal_rating
+      SELECT
+        id,
+        username,
+        display_name,
+        rating,
+        internal_rating
       FROM users
-      WHERE id = ?
-    `
+      WHERE id = $1
+    `,
+      [id]
     );
-    const row = stmt.get(id);
     return row || null;
   } catch (e) {
     log("getUserById error:", e);
@@ -116,19 +109,24 @@ function getUserById(id) {
   }
 }
 
-// ★ マッチ用：username か display_name でユーザー取得（フォールバック用）
-function getUserForMatch(name) {
+// username / display_name でユーザー取得
+async function getUserForMatch(name) {
   if (!name) return null;
   try {
-    const stmt = db.prepare(
+    const row = await db.get(
       `
-      SELECT id, username, display_name, rating, internal_rating
+      SELECT
+        id,
+        username,
+        display_name,
+        rating,
+        internal_rating
       FROM users
-      WHERE username = ? OR display_name = ?
+      WHERE username = $1 OR display_name = $1
       LIMIT 1
-    `
+    `,
+      [name]
     );
-    const row = stmt.get(name, name);
     return row || null;
   } catch (e) {
     log("getUserForMatch error:", e);
@@ -136,29 +134,30 @@ function getUserForMatch(name) {
   }
 }
 
-// ★ user_id からマイチーム取得
-function getUserTeamByUserId(userId) {
+// user_id からマイチーム
+async function getUserTeamByUserId(userId) {
   if (!userId) return [];
   try {
-    const stmt = db.prepare(`
+    const rows = await db.query(
+      `
       SELECT
         ut.slot,
         ut.character_id,
         uc.stars,
         c.char_no,
         c.name,
-        c.base_rarity,
-        c.image_url
+        c.base_rarity
+        -- ★ c.image_url はないので消す
       FROM user_teams ut
       JOIN user_characters uc
         ON uc.user_id = ut.user_id AND uc.character_id = ut.character_id
       LEFT JOIN characters c
         ON c.id = ut.character_id
-      WHERE ut.user_id = ?
+      WHERE ut.user_id = $1
       ORDER BY ut.slot ASC
-    `);
-
-    const rows = stmt.all(userId);
+    `,
+      [userId]
+    );
 
     return rows.map((row) => ({
       slot: row.slot,
@@ -167,7 +166,7 @@ function getUserTeamByUserId(userId) {
       name: row.name || `キャラID:${row.character_id}`,
       rarity: row.base_rarity ?? 1,
       char_no: row.char_no ?? row.character_id,
-      image_url: row.image_url || null,
+      image_url: null, // ここも一旦 null にしておく
     }));
   } catch (e) {
     log("getUserTeamByUserId error:", e);
@@ -175,142 +174,65 @@ function getUserTeamByUserId(userId) {
   }
 }
 
-// ========== レートマッチング ==========
 
-function tryRateMatch() {
-  log("tryRateMatch, queue size:", rateQueue.length);
-  if (rateQueue.length < 2) return;
+// ───────── ユーザー取得ヘルパー（id or name） ─────────
+async function getUserFromPlayer(player) {
+  const baseSelect = `
+    SELECT
+      id,
+      username,
+      display_name,
+      rating,
+      internal_rating,
+      matches_played,
+      wins,
+      losses,
+      current_streak,
+      best_streak
+    FROM users
+  `;
 
-  const first = rateQueue.shift();
-  if (rateQueue.length === 0) {
-    rateQueue.unshift(first);
-    log("only one in queue, back:", first.name);
-    return;
-  }
+  let user = null;
 
-  if (rateQueue.length === 1) {
-    const second = rateQueue.shift();
-    makeRoomAndNotify(first, second);
-    return;
-  }
-
-  // 3人以上 → レートが一番近い相手を探す
-  let bestIndex = 0;
-  let bestDiff = Infinity;
-  for (let i = 0; i < rateQueue.length; i++) {
-    const cand = rateQueue[i];
-    const diff = Math.abs((cand.rating ?? 1500) - (first.rating ?? 1500));
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestIndex = i;
+  // ① userId 優先
+  if (player.userId != null) {
+    try {
+      user = await db.get(baseSelect + " WHERE id = $1", [player.userId]);
+      if (user) {
+        log(
+          "getUserFromPlayer: found by id",
+          player.userId,
+          "->",
+          user.username
+        );
+        return user;
+      }
+      log("getUserFromPlayer: not found by id", player.userId);
+    } catch (e) {
+      log("getUserFromPlayer error(by id):", e);
     }
   }
 
-  const second = rateQueue.splice(bestIndex, 1)[0];
-  makeRoomAndNotify(first, second);
-}
+  // ② なければ / 見つからなければ name で
+  if (player.name) {
+    try {
+      user = await db.get(baseSelect + " WHERE username = $1", [player.name]);
+      if (user) {
+        log(
+          "getUserFromPlayer: found by username",
+          player.name,
+          "-> id",
+          user.id
+        );
+        return user;
+      }
+      log("getUserFromPlayer: not found by username", player.name);
+    } catch (e) {
+      log("getUserFromPlayer error(by name):", e);
+    }
+  }
 
-function makeRoomAndNotify(a, b) {
-  const roomId =
-    "r-" +
-    Date.now().toString(36) +
-    "-" +
-    Math.random().toString(36).slice(2, 8);
-
-  // ★ まず userId 優先でユーザー取得 → なければ名前でフォールバック
-  const userA = a.userId ? getUserById(a.userId) : getUserForMatch(a.name);
-  const userB = b.userId ? getUserById(b.userId) : getUserForMatch(b.name);
-
-  // A側ユーザー情報
-  const displayRatingA =
-    typeof userA?.rating === "number"
-      ? userA.rating
-      : typeof a.rating === "number"
-      ? a.rating
-      : 1500;
-  const ratingForTitleA =
-    typeof userA?.internal_rating === "number"
-      ? userA.internal_rating
-      : displayRatingA;
-  const titleA = getRankName(ratingForTitleA);
-  const displayNameA =
-    userA?.display_name || userA?.username || a.name || "プレイヤーA";
-
-  // B側ユーザー情報
-  const displayRatingB =
-    typeof userB?.rating === "number"
-      ? userB.rating
-      : typeof b.rating === "number"
-      ? b.rating
-      : 1500;
-  const ratingForTitleB =
-    typeof userB?.internal_rating === "number"
-      ? userB.internal_rating
-      : displayRatingB;
-  const titleB = getRankName(ratingForTitleB);
-  const displayNameB =
-    userB?.display_name || userB?.username || b.name || "プレイヤーB";
-
-  // ★ マイチーム（最大5体）
-  const teamA = userA?.id ? getUserTeamByUserId(userA.id) : [];
-  const teamB = userB?.id ? getUserTeamByUserId(userB.id) : [];
-
-  log(
-    "rate match:",
-    `${displayNameA}(${displayRatingA}) vs ${displayNameB}(${displayRatingB}) -> room ${roomId}`
-  );
-  log(
-    "rate match titles:",
-    `${displayNameA}: ${titleA} / ${ratingForTitleA},`,
-    `${displayNameB}: ${titleB} / ${ratingForTitleB}`
-  );
-  log("teamA:", teamA);
-  log("teamB:", teamB);
-
-  // A に送る：相手は B
-  io.to(a.socketId).emit("rate:matched", {
-    roomId,
-
-    // 旧フィールド（後方互換）
-    opponentName: displayNameB,
-    opponentDisplayName: displayNameB,
-    opponentDisplayRating: displayRatingB,
-    opponentInternalRating: ratingForTitleB,
-    opponentTitle: titleB,
-
-    // 自分側
-    selfUserId: userA?.id ?? null,
-    selfDisplayName: displayNameA,
-    selfDisplayRating: displayRatingA,
-    selfInternalRating: ratingForTitleA,
-    selfTitle: titleA,
-    selfTeam: teamA,
-
-    // 相手マイチーム
-    opponentUserId: userB?.id ?? null,
-    opponentTeam: teamB,
-  });
-
-  // B に送る：相手は A
-  io.to(b.socketId).emit("rate:matched", {
-    roomId,
-
-    opponentName: displayNameA,
-    opponentDisplayName: displayNameA,
-    opponentDisplayRating: displayRatingA,
-    opponentInternalRating: ratingForTitleA,
-    opponentTitle: titleA,
-
-    selfUserId: userB?.id ?? null,
-    selfDisplayName: displayNameB,
-    selfDisplayRating: displayRatingB,
-    selfInternalRating: ratingForTitleB,
-    selfTitle: titleB,
-    selfTeam: teamB,
-
-    opponentUserId: userA?.id ?? null,
-    opponentTeam: teamA,
-  });
+  return null;
 }
 
 // ========== レート計算周り ==========
@@ -326,45 +248,8 @@ function eloChange(ratingSelf, ratingOpp, outcome, kFactor) {
   return delta;
 }
 
-// ───────── ユーザー取得ヘルパー ─────────
-function getUserFromPlayer(player) {
-  const baseSelect =
-    "SELECT id, username, rating, internal_rating, matches_played, wins, losses, current_streak, best_streak FROM users";
-
-  let user = null;
-
-  // ① userId があれば id で探す
-  if (player.userId != null) {
-    const stmtById = db.prepare(baseSelect + " WHERE id = ?");
-    user = stmtById.get(player.userId);
-    if (user) {
-      log("getUserFromPlayer: found by id", player.userId, "->", user.username);
-      return user;
-    }
-    log("getUserFromPlayer: not found by id", player.userId);
-  }
-
-  // ② なければ / 見つからなければ、username(=player.name) で探す
-  if (player.name) {
-    const stmtByName = db.prepare(baseSelect + " WHERE username = ?");
-    user = stmtByName.get(player.name);
-    if (user) {
-      log(
-        "getUserFromPlayer: found by username",
-        player.name,
-        "-> id",
-        user.id
-      );
-      return user;
-    }
-    log("getUserFromPlayer: not found by username", player.name);
-  }
-
-  return null;
-}
-
-// 通常終了（切断以外）のレート更新：点差ボーナス + 連勝ボーナス + 勝利ベリー
-function updateRatingsNormalFinish(p0, p1) {
+// 通常終了（切断以外）のレート更新
+async function updateRatingsNormalFinish(p0, p1) {
   log("updateRatingsNormalFinish called:", {
     p0UserId: p0.userId,
     p1UserId: p1.userId,
@@ -374,8 +259,8 @@ function updateRatingsNormalFinish(p0, p1) {
     p1Score: p1.score,
   });
 
-  const user0 = getUserFromPlayer(p0);
-  const user1 = getUserFromPlayer(p1);
+  const user0 = await getUserFromPlayer(p0);
+  const user1 = await getUserFromPlayer(p1);
 
   if (!user0 || !user1) {
     log(
@@ -390,7 +275,6 @@ function updateRatingsNormalFinish(p0, p1) {
     return;
   }
 
-  // 勝敗判定（クライアントと同じロジック）
   const decideOutcome = (self, opp) => {
     if (self.score > opp.score) return "win";
     if (self.score < opp.score) return "lose";
@@ -408,13 +292,11 @@ function updateRatingsNormalFinish(p0, p1) {
   let delta0 = eloChange(r0, r1, outcome0);
   let delta1 = eloChange(r1, r0, outcome1);
 
-  // 点差ボーナス：最大10点 → 最大2倍
   const diff = Math.min(10, Math.abs(p0.score - p1.score));
   const pointFactor = 1 + diff / 10;
   delta0 *= pointFactor;
   delta1 *= pointFactor;
 
-  // 勝敗数 & 連勝
   let newStreak0 = user0.current_streak ?? 0;
   let newStreak1 = user1.current_streak ?? 0;
   let wins0 = user0.wins ?? 0;
@@ -433,12 +315,10 @@ function updateRatingsNormalFinish(p0, p1) {
     wins1 += 1;
     losses0 += 1;
   } else {
-    // 引き分け → 連勝リセット
     newStreak0 = 0;
     newStreak1 = 0;
   }
 
-  // 連勝ボーナス（勝者のみ、最大+10）
   if (outcome0 === "win") {
     delta0 += Math.min(newStreak0, 10);
   }
@@ -457,11 +337,20 @@ function updateRatingsNormalFinish(p0, p1) {
   const matches0 = (user0.matches_played ?? 0) + 1;
   const matches1 = (user1.matches_played ?? 0) + 1;
 
-  const updateStmt = db.prepare(
-    "UPDATE users SET rating = ?, internal_rating = ?, matches_played = ?, wins = ?, losses = ?, current_streak = ?, best_streak = ? WHERE id = ?"
-  );
+  const updateSql = `
+    UPDATE users
+    SET
+      rating = $1,
+      internal_rating = $2,
+      matches_played = $3,
+      wins = $4,
+      losses = $5,
+      current_streak = $6,
+      best_streak = $7
+    WHERE id = $8
+  `;
 
-  updateStmt.run(
+  await db.run(updateSql, [
     newRating0,
     newInternal0,
     matches0,
@@ -469,9 +358,9 @@ function updateRatingsNormalFinish(p0, p1) {
     losses0,
     newStreak0,
     newBestStreak0,
-    user0.id
-  );
-  updateStmt.run(
+    user0.id,
+  ]);
+  await db.run(updateSql, [
     newRating1,
     newInternal1,
     matches1,
@@ -479,8 +368,8 @@ function updateRatingsNormalFinish(p0, p1) {
     losses1,
     newStreak1,
     newBestStreak1,
-    user1.id
-  );
+    user1.id,
+  ]);
 
   log(
     "rating updated (normal):",
@@ -491,13 +380,12 @@ function updateRatingsNormalFinish(p0, p1) {
     `${r1} -> ${newRating1}`
   );
 
-  // ★★★ ここでレート戦勝利ベリー付与 ★★★
   try {
     if (outcome0 === "win") {
-      addBerriesByUserId(user0.id, 300, "レート戦勝利報酬");
+      await addBerriesByUserId(user0.id, 300, "レート戦勝利報酬");
       log("berries: +300 to", user0.username, "(normal finish)");
     } else if (outcome1 === "win") {
-      addBerriesByUserId(user1.id, 300, "レート戦勝利報酬");
+      await addBerriesByUserId(user1.id, 300, "レート戦勝利報酬");
       log("berries: +300 to", user1.username, "(normal finish)");
     } else {
       log("no berries (draw match)");
@@ -507,8 +395,8 @@ function updateRatingsNormalFinish(p0, p1) {
   }
 }
 
-// 切断による敗北：点差ボーナスなし、連勝ボーナスあり + 勝利ベリー
-function updateRatingsDisconnectFinish(winner, loser) {
+// 切断敗北のレート更新
+async function updateRatingsDisconnectFinish(winner, loser) {
   log("updateRatingsDisconnectFinish called:", {
     winnerUserId: winner.userId,
     loserUserId: loser.userId,
@@ -516,8 +404,8 @@ function updateRatingsDisconnectFinish(winner, loser) {
     loserName: loser.name,
   });
 
-  const userW = getUserFromPlayer(winner);
-  const userL = getUserFromPlayer(loser);
+  const userW = await getUserFromPlayer(winner);
+  const userL = await getUserFromPlayer(loser);
 
   if (!userW || !userL) {
     log(
@@ -545,7 +433,6 @@ function updateRatingsDisconnectFinish(winner, loser) {
   const lossesW = userW.losses ?? 0;
   const lossesL = (userL.losses ?? 0) + 1;
 
-  // 連勝ボーナス（勝者のみ）
   deltaW += Math.min(newStreakW, 10);
 
   const newInternalW = rW + deltaW;
@@ -559,11 +446,20 @@ function updateRatingsDisconnectFinish(winner, loser) {
   const matchesW = (userW.matches_played ?? 0) + 1;
   const matchesL = (userL.matches_played ?? 0) + 1;
 
-  const updateStmt = db.prepare(
-    "UPDATE users SET rating = ?, internal_rating = ?, matches_played = ?, wins = ?, losses = ?, current_streak = ?, best_streak = ? WHERE id = ?"
-  );
+  const updateSql = `
+    UPDATE users
+    SET
+      rating = $1,
+      internal_rating = $2,
+      matches_played = $3,
+      wins = $4,
+      losses = $5,
+      current_streak = $6,
+      best_streak = $7
+    WHERE id = $8
+  `;
 
-  updateStmt.run(
+  await db.run(updateSql, [
     newRatingW,
     newInternalW,
     matchesW,
@@ -571,9 +467,9 @@ function updateRatingsDisconnectFinish(winner, loser) {
     lossesW,
     newStreakW,
     newBestStreakW,
-    userW.id
-  );
-  updateStmt.run(
+    userW.id,
+  ]);
+  await db.run(updateSql, [
     newRatingL,
     newInternalL,
     matchesL,
@@ -581,8 +477,8 @@ function updateRatingsDisconnectFinish(winner, loser) {
     lossesL,
     newStreakL,
     newBestStreakL,
-    userL.id
-  );
+    userL.id,
+  ]);
 
   log(
     "rating updated (disconnect):",
@@ -593,28 +489,150 @@ function updateRatingsDisconnectFinish(winner, loser) {
     `${rL} -> ${newRatingL}`
   );
 
-  // ★★★ 切断勝利でも 300 ベリー付与 ★★★
   try {
-    addBerriesByUserId(userW.id, 300, "レート戦勝利報酬(切断)");
+    await addBerriesByUserId(userW.id, 300, "レート戦勝利報酬(切断)");
     log("berries: +300 to", userW.username, "(disconnect win)");
   } catch (e) {
     log("addBerriesByUserId error (disconnect):", e);
   }
 }
 
+// ========== レートマッチング ==========
+
+async function tryRateMatch() {
+  log("tryRateMatch, queue size:", rateQueue.length);
+  if (rateQueue.length < 2) return;
+
+  const first = rateQueue.shift();
+  if (rateQueue.length === 0) {
+    rateQueue.unshift(first);
+    log("only one in queue, back:", first.name);
+    return;
+  }
+
+  if (rateQueue.length === 1) {
+    const second = rateQueue.shift();
+    await makeRoomAndNotify(first, second);
+    return;
+  }
+
+  let bestIndex = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < rateQueue.length; i++) {
+    const cand = rateQueue[i];
+    const diff = Math.abs((cand.rating ?? 1500) - (first.rating ?? 1500));
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIndex = i;
+    }
+  }
+
+  const second = rateQueue.splice(bestIndex, 1)[0];
+  await makeRoomAndNotify(first, second);
+}
+
+async function makeRoomAndNotify(a, b) {
+  const roomId =
+    "r-" +
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2, 8);
+
+  const userA = a.userId ? await getUserById(a.userId) : await getUserForMatch(a.name);
+  const userB = b.userId ? await getUserById(b.userId) : await getUserForMatch(b.name);
+
+  const displayRatingA =
+    typeof userA?.rating === "number"
+      ? userA.rating
+      : typeof a.rating === "number"
+      ? a.rating
+      : 1500;
+  const ratingForTitleA =
+    typeof userA?.internal_rating === "number"
+      ? userA.internal_rating
+      : displayRatingA;
+  const titleA = getRankName(ratingForTitleA);
+  const displayNameA =
+    userA?.display_name || userA?.username || a.name || "プレイヤーA";
+
+  const displayRatingB =
+    typeof userB?.rating === "number"
+      ? userB.rating
+      : typeof b.rating === "number"
+      ? b.rating
+      : 1500;
+  const ratingForTitleB =
+    typeof userB?.internal_rating === "number"
+      ? userB.internal_rating
+      : displayRatingB;
+  const titleB = getRankName(ratingForTitleB);
+  const displayNameB =
+    userB?.display_name || userB?.username || b.name || "プレイヤーB";
+
+  const teamA = userA?.id ? await getUserTeamByUserId(userA.id) : [];
+  const teamB = userB?.id ? await getUserTeamByUserId(userB.id) : [];
+
+  log(
+    "rate match:",
+    `${displayNameA}(${displayRatingA}) vs ${displayNameB}(${displayRatingB}) -> room ${roomId}`
+  );
+  log(
+    "rate match titles:",
+    `${displayNameA}: ${titleA} / ${ratingForTitleA},`,
+    `${displayNameB}: ${titleB} / ${ratingForTitleB}`
+  );
+  log("teamA:", teamA);
+  log("teamB:", teamB);
+
+  io.to(a.socketId).emit("rate:matched", {
+    roomId,
+    opponentName: displayNameB,
+    opponentDisplayName: displayNameB,
+    opponentDisplayRating: displayRatingB,
+    opponentInternalRating: ratingForTitleB,
+    opponentTitle: titleB,
+    selfUserId: userA?.id ?? null,
+    selfDisplayName: displayNameA,
+    selfDisplayRating: displayRatingA,
+    selfInternalRating: ratingForTitleA,
+    selfTitle: titleA,
+    selfTeam: teamA,
+    opponentUserId: userB?.id ?? null,
+    opponentTeam: teamB,
+  });
+
+  io.to(b.socketId).emit("rate:matched", {
+    roomId,
+    opponentName: displayNameA,
+    opponentDisplayName: displayNameA,
+    opponentDisplayRating: displayRatingA,
+    opponentInternalRating: ratingForTitleA,
+    opponentTitle: titleA,
+    selfUserId: userB?.id ?? null,
+    selfDisplayName: displayNameB,
+    selfDisplayRating: displayRatingB,
+    selfInternalRating: ratingForTitleB,
+    selfTitle: titleB,
+    selfTeam: teamB,
+    opponentUserId: userA?.id ?? null,
+    opponentTeam: teamA,
+  });
+}
+
 // ========== ソケットイベント ==========
 
 io.on("connection", (socket) => {
-  // ★ 接続数カウントアップ
   onlineCount += 1;
   log("socket connected:", socket.id, "onlineCount:", onlineCount);
 
-  // ----- レートマッチ -----
-
-  socket.on("rate:join-queue", ({ name, rating, userId }) => {
+  // レートマッチ参加
+  socket.on("rate:join-queue", async ({ name, rating, userId }) => {
     const safeName = name || "プレイヤー";
     const safeRating = typeof rating === "number" ? rating : 1500;
-    const safeUserId = typeof userId === "number" ? userId : null;
+    const safeUserId =
+      typeof userId === "number" || typeof userId === "string"
+        ? userId
+        : null;
 
     removeFromRateQueue(socket.id);
 
@@ -640,7 +658,7 @@ io.on("connection", (socket) => {
       size: rateQueue.length,
     });
 
-    tryRateMatch();
+    await tryRateMatch();
   });
 
   socket.on("rate:leave-queue", () => {
@@ -652,7 +670,6 @@ io.on("connection", (socket) => {
   });
 
   // ----- バトル -----
-
   socket.on("battle:join", ({ roomId, playerName, userId }) => {
     if (!roomId) return;
     let room = rooms.get(roomId);
@@ -706,118 +723,122 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("battle:answer", ({ roomId, questionIndex, isCorrect, timeMs }) => {
-    const room = rooms.get(roomId);
-    if (!room || room.isFinished) return;
+  socket.on(
+    "battle:answer",
+    async ({ roomId, questionIndex, isCorrect, timeMs }) => {
+      const room = rooms.get(roomId);
+      if (!room || room.isFinished) return;
 
-    const player = room.players.get(socket.id);
-    if (!player) return;
+      const player = room.players.get(socket.id);
+      if (!player) return;
 
-    const idx = typeof questionIndex === "number" ? questionIndex : 0;
-    const used = typeof timeMs === "number" ? timeMs : 0;
+      const idx = typeof questionIndex === "number" ? questionIndex : 0;
+      const used = typeof timeMs === "number" ? timeMs : 0;
 
-    if (isCorrect) player.score += 1;
-    player.totalTimeMs += used;
+      if (isCorrect) player.score += 1;
+      player.totalTimeMs += used;
 
-    log(
-      "battle:answer",
-      "room:",
-      roomId,
-      "q:",
-      idx,
-      "player:",
-      player.name,
-      "isCorrect:",
-      !!isCorrect,
-      "timeMs:",
-      used,
-      "score:",
-      player.score
-    );
+      log(
+        "battle:answer",
+        "room:",
+        roomId,
+        "q:",
+        idx,
+        "player:",
+        player.name,
+        "isCorrect:",
+        !!isCorrect,
+        "timeMs:",
+        used,
+        "score:",
+        player.score
+      );
 
-    let ansMap = room.answers.get(idx);
-    if (!ansMap) {
-      ansMap = new Map();
-      room.answers.set(idx, ansMap);
-    }
-    ansMap.set(socket.id, { isCorrect: !!isCorrect, timeMs: used });
+      let ansMap = room.answers.get(idx);
+      if (!ansMap) {
+        ansMap = new Map();
+        room.answers.set(idx, ansMap);
+      }
+      ansMap.set(socket.id, { isCorrect: !!isCorrect, timeMs: used });
 
-    const playersArr = Array.from(room.players.values());
+      const playersArr = Array.from(room.players.values());
 
-    // まだ片方しか回答していなければここで終了（相手待ち）
-    if (ansMap.size < playersArr.length) {
-      log("battle:answer waiting other player, room:", roomId, "q:", idx);
-      return;
-    }
+      if (ansMap.size < playersArr.length) {
+        log("battle:answer waiting other player, room:", roomId, "q:", idx);
+        return;
+      }
 
-    const nextIndex = idx + 1;
-    const maxQuestions = room.maxQuestions;
-    const [p0, p1] = playersArr;
+      const nextIndex = idx + 1;
+      const maxQuestions = room.maxQuestions;
+      const [p0, p1] = playersArr;
 
-    let finished = false;
-    if (p0.score >= 10 || p1.score >= 10) finished = true;
-    if (nextIndex >= maxQuestions) finished = true;
+      let finished = false;
+      if (p0.score >= 10 || p1.score >= 10) finished = true;
+      if (nextIndex >= maxQuestions) finished = true;
 
-    if (finished) {
-      room.isFinished = true;
-      log("battle:finished room:", roomId);
+      if (finished) {
+        room.isFinished = true;
+        log("battle:finished room:", roomId);
 
-      // ★ 通常終了 → レート更新 + ベリー付与
-      updateRatingsNormalFinish(p0, p1);
-
-      const makePayloadFor = (self, opp) => {
-        let outcome = "draw";
-        if (self.score > opp.score) outcome = "win";
-        if (self.score < opp.score) outcome = "lose";
-        else {
-          if (self.totalTimeMs < opp.totalTimeMs) outcome = "win";
-          else if (self.totalTimeMs > opp.totalTimeMs) outcome = "lose";
+        try {
+          await updateRatingsNormalFinish(p0, p1);
+        } catch (e) {
+          log("updateRatingsNormalFinish error:", e);
         }
-        return {
-          outcome,
-          self: {
-            score: self.score,
-            totalTimeMs: self.totalTimeMs,
-          },
-          opponent: {
-            score: opp.score,
-            totalTimeMs: opp.totalTimeMs,
-          },
+
+        const makePayloadFor = (self, opp) => {
+          let outcome = "draw";
+          if (self.score > opp.score) outcome = "win";
+          if (self.score < opp.score) outcome = "lose";
+          else {
+            if (self.totalTimeMs < opp.totalTimeMs) outcome = "win";
+            else if (self.totalTimeMs > opp.totalTimeMs) outcome = "lose";
+          }
+          return {
+            outcome,
+            self: {
+              score: self.score,
+              totalTimeMs: self.totalTimeMs,
+            },
+            opponent: {
+              score: opp.score,
+              totalTimeMs: opp.totalTimeMs,
+            },
+          };
         };
-      };
 
-      io.to(p0.socketId).emit("battle:finished", makePayloadFor(p0, p1));
-      io.to(p1.socketId).emit("battle:finished", makePayloadFor(p1, p0));
+        io.to(p0.socketId).emit("battle:finished", makePayloadFor(p0, p1));
+        io.to(p1.socketId).emit("battle:finished", makePayloadFor(p1, p0));
 
-      rooms.delete(roomId);
-    } else {
-      const scoresPayload = playersArr.map((p) => ({
-        socketId: p.socketId,
-        name: p.name,
-        score: p.score,
-        totalTimeMs: p.totalTimeMs,
-      }));
+        rooms.delete(roomId);
+      } else {
+        const scoresPayload = playersArr.map((p) => ({
+          socketId: p.socketId,
+          name: p.name,
+          score: p.score,
+          totalTimeMs: p.totalTimeMs,
+        }));
 
-      log("battle:next (wait 2s) room:", roomId, "nextIndex:", nextIndex);
+        log("battle:next (wait 2s) room:", roomId, "nextIndex:", nextIndex);
 
-      setTimeout(() => {
-        const currentRoom = rooms.get(roomId);
-        if (!currentRoom || currentRoom.isFinished) return;
+        setTimeout(() => {
+          const currentRoom = rooms.get(roomId);
+          if (!currentRoom || currentRoom.isFinished) return;
 
-        const currentPlayers = Array.from(currentRoom.players.values());
-        currentPlayers.forEach((p) => {
-          io.to(p.socketId).emit("battle:next", {
-            roomId,
-            nextQuestionIndex: nextIndex,
-            scores: scoresPayload,
+          const currentPlayers = Array.from(currentRoom.players.values());
+          currentPlayers.forEach((p) => {
+            io.to(p.socketId).emit("battle:next", {
+              roomId,
+              nextQuestionIndex: nextIndex,
+              scores: scoresPayload,
+            });
           });
-        });
-      }, 2000);
+        }, 2000);
+      }
     }
-  });
+  );
 
-  socket.on("disconnect", () => {
-    // ★ 接続数カウントダウン
+  socket.on("disconnect", async () => {
     onlineCount = Math.max(0, onlineCount - 1);
     log("socket disconnected:", socket.id, "onlineCount:", onlineCount);
 
@@ -832,7 +853,6 @@ io.on("connection", (socket) => {
         const remaining = Array.from(room.players.values());
 
         if (!room.isFinished && remaining.length === 1) {
-          // ★ 切断による敗北
           const winner = remaining[0];
           log(
             "battle:disconnect -> winner:",
@@ -845,10 +865,12 @@ io.on("connection", (socket) => {
 
           room.isFinished = true;
 
-          // レート更新（切断負け：点差ボーナスなし）+ ベリー付与
-          updateRatingsDisconnectFinish(winner, leaver);
+          try {
+            await updateRatingsDisconnectFinish(winner, leaver);
+          } catch (e) {
+            log("updateRatingsDisconnectFinish error:", e);
+          }
 
-          // 勝者にだけ結果を返す
           io.to(winner.socketId).emit("battle:finished", {
             outcome: "win",
             self: {

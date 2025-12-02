@@ -28,10 +28,9 @@ export async function POST(req) {
     // 先頭の @ は削除
     loginId = loginId.replace(/^@/, '').trim();
 
-    // ユーザー取得
-    const row = db
-      .prepare(
-        `
+    // ★ Postgres 版: db.get を await で使用（? ではなく $1 プレースホルダ）
+    const row = await db.get(
+      `
         SELECT
           id,
           username,
@@ -40,12 +39,12 @@ export async function POST(req) {
           password_hash,
           banned
         FROM users
-        WHERE login_id = ?
-      `
-      )
-      .get(loginId);
+        WHERE login_id = $1
+      `,
+      [loginId]
+    );
 
-    // ユーザーがいない or パスワード不一致
+    // ユーザーがいない or パスワード未設定
     if (!row || !row.password_hash) {
       return new Response(
         JSON.stringify({
@@ -60,7 +59,7 @@ export async function POST(req) {
       );
     }
 
-    // ★ BAN チェック
+    // BAN チェック
     if ((row.banned ?? 0) !== 0) {
       return new Response(
         JSON.stringify({
@@ -76,6 +75,7 @@ export async function POST(req) {
       );
     }
 
+    // パスワード照合
     const passwordOk = bcrypt.compareSync(password, row.password_hash);
     if (!passwordOk) {
       return new Response(
@@ -91,7 +91,7 @@ export async function POST(req) {
       );
     }
 
-    // ログイン成功 → クッキーに username を保存
+    // ログイン成功 → サーバー側でも nb_username クッキーをセット
     const cookieStore = await cookies();
     cookieStore.set('nb_username', row.username, {
       path: '/',

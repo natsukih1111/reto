@@ -4,6 +4,11 @@ import { cookies } from 'next/headers';
 import db from '@/lib/db.js';
 import { addUserMistake } from '@/lib/mistakes.js';
 
+async function queryRows(sql, params = []) {
+  const res = await db.query(sql, params);
+  return Array.isArray(res) ? res : res.rows;
+}
+
 export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -26,9 +31,11 @@ export async function POST(req) {
       );
     }
 
-    const user = db
-      .prepare('SELECT id FROM users WHERE username = ?')
-      .get(username);
+    const userRows = await queryRows(
+      'SELECT id FROM users WHERE username = $1',
+      [username]
+    );
+    const user = userRows[0];
 
     if (!user) {
       return NextResponse.json(
@@ -38,18 +45,20 @@ export async function POST(req) {
     }
 
     // question_submissions に存在するかチェック
-    const submission = db
-      .prepare('SELECT id FROM question_submissions WHERE id = ?')
-      .get(questionId);
+    const qRows = await queryRows(
+      'SELECT id FROM question_submissions WHERE id = $1',
+      [questionId]
+    );
+    const question = qRows[0];
 
-    if (!submission) {
+    if (!question) {
       return NextResponse.json(
         { ok: false, error: 'QUESTION_NOT_FOUND' },
         { status: 404 }
       );
     }
 
-    addUserMistake(user.id, questionId);
+    await addUserMistake(user.id, questionId);
 
     return NextResponse.json({ ok: true });
   } catch (e) {

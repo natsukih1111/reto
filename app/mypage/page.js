@@ -26,6 +26,10 @@ export default function MyPage() {
   // キャラ図鑑サマリ
   const [charSummary, setCharSummary] = useState(null);
 
+  // ★ チャレンジ成績（ここを追加）
+  const [challengeSeasonBest, setChallengeSeasonBest] = useState(0);
+  const [challengeAllTimeBest, setChallengeAllTimeBest] = useState(0);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -36,6 +40,15 @@ export default function MyPage() {
         setUser(u);
         setSeason(d.season ?? '');
         setTwitterUrl(u?.twitter_url || '');
+
+        // ★ チャレンジ成績を取り出す（両方の形式に対応）
+        const seasonBestObj =
+          d.challengeSeasonBest || d.challenge?.seasonBest || null;
+        const allTimeBestObj =
+          d.challengeAllTimeBest || d.challenge?.allTimeBest || null;
+
+        setChallengeSeasonBest(seasonBestObj?.best_correct ?? 0);
+        setChallengeAllTimeBest(allTimeBestObj?.best_correct ?? 0);
 
         if (u) {
           // 表示名
@@ -76,6 +89,7 @@ export default function MyPage() {
 
     load();
   }, []);
+
 
   const handleLogout = async () => {
     if (loggingOut) return;
@@ -184,6 +198,12 @@ export default function MyPage() {
 
   const ownedUnique =
     charSummary?.uniqueOwned ?? charSummary?.ownedCount ?? null;
+
+  // ★ チャレンジ用表示値（best_correct だけ抜いて表示）
+// ★ チャレンジ用表示値（state はそのまま数字）
+const seasonBestCorrect = challengeSeasonBest;
+const allTimeBestCorrect = challengeAllTimeBest;
+
 
   return (
     <div className="min-h-screen bg-sky-50 flex flex-col items-center text-sky-900">
@@ -309,16 +329,14 @@ export default function MyPage() {
           <h2 className="text-lg font-extrabold mb-2">チャレンジモード成績</h2>
           <div className="text-sm space-y-1">
             <p>
-              シーズン最高：
-              {user.challengeSeasonBest ?? 0} 問連続正解
+              シーズン最高：{seasonBestCorrect} 問正解
             </p>
             <p>
-              歴代最高：
-              {user.challengeAllTimeBest ?? 0} 問連続正解
+              歴代最高：{allTimeBestCorrect} 問正解
             </p>
           </div>
           <p className="mt-2 text-[11px] text-sky-700">
-            ※ チャレンジモード実装後、この記録が自動で更新されます。
+            ※ チャレンジモードでプレイすると、この記録が自動で更新されます。
           </p>
         </section>
 
@@ -387,25 +405,24 @@ export default function MyPage() {
 
         {/* その他（履歴・復習・ログアウト） */}
         <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-3 shadow-sm">
-  <h2 className="text-lg font-extrabold mb-2">その他</h2>
-  <div className="flex flex-col gap-2">
-    <Link
-      href="/mistakes"  // ★ここを /history から変更
-      className="w-full text-center py-2 rounded-full bg-white border border-sky-500 text-sky-700 text-sm font-bold"
-    >
-      間違えた問題を復習する
-    </Link>
-    <button
-      type="button"
-      onClick={handleLogout}
-      disabled={loggingOut}
-      className="w-full text-center py-2 rounded-full bg-gray-300 text-gray-700 text-sm font-bold disabled:opacity-60"
-    >
-      {loggingOut ? 'ログアウト中…' : 'ログアウト'}
-    </button>
-  </div>
-</section>
-
+          <h2 className="text-lg font-extrabold mb-2">その他</h2>
+          <div className="flex flex-col gap-2">
+            <Link
+              href="/mistakes"
+              className="w-full text-center py-2 rounded-full bg-white border border-sky-500 text-sky-700 text-sm font-bold"
+            >
+              間違えた問題を復習する
+            </Link>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="w-full text-center py-2 rounded-full bg-gray-300 text-gray-700 text-sm font-bold disabled:opacity-60"
+            >
+              {loggingOut ? 'ログアウト中…' : 'ログアウト'}
+            </button>
+          </div>
+        </section>
       </main>
     </div>
   );

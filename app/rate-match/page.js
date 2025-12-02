@@ -26,7 +26,7 @@ function parseNumberOrNull(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
-// マイチームのカード用コンポーネント（横長）
+// ★★ ここ直す：どんな形で来てもレア度・★を拾う ★★
 function TeamCardMini({ member }) {
   if (!member) {
     // 空スロット
@@ -35,8 +35,19 @@ function TeamCardMini({ member }) {
     );
   }
 
-  const rarity = member.rarity ?? 1;
-  const star = member.star ?? 1;
+  const rarity =
+    member.rarity ??
+    member.base_rarity ??
+    member.baseRarity ??
+    member.rarity_original ??
+    1;
+
+  const star =
+    member.star ??
+    member.stars ??
+    member.current_star ??
+    member.currentStar ??
+    1;
 
   // 枠色（レア度）
   let borderClass = 'border-slate-400';
@@ -166,7 +177,6 @@ export default function RateMatchPage() {
       console.log('[rate:matched payload]', payload);
 
       // ====== 自分側 ======
-      // ★ 自分の情報は常に /api/me の me を使う（payload には頼らない）
       const myName =
         me?.display_name || me?.username || me?.name || '自分';
 
@@ -223,7 +233,6 @@ export default function RateMatchPage() {
         `マッチング成立: room=${payload.roomId} vs ${oppName} (oppRating=${oppRating ?? '---'})`
       );
 
-      // 自分側のレート・称号は matchedInfo に持たない
       setMatchedInfo({
         roomId: payload.roomId,
         myName,
@@ -282,7 +291,7 @@ export default function RateMatchPage() {
     const payload = {
       name: me.display_name || me.username || 'プレイヤー',
       rating: me.rating ?? 1500,
-      userId: me.id ?? null, // userId をサーバーに送る
+      userId: me.id ?? null,
     };
     console.log('emit rate:join-queue', payload);
     socket.emit('rate:join-queue', payload);
@@ -313,7 +322,6 @@ export default function RateMatchPage() {
         const elapsed = Date.now() - start;
 
         if (elapsed >= 30000 && !matchFoundRef.current) {
-          // 30秒経過 & まだマッチしてない → AI戦に自動切替
           if (socket) {
             socket.emit('rate:leave-queue');
           }
@@ -364,7 +372,6 @@ export default function RateMatchPage() {
     );
   };
 
-  // 自分の表示用のヘルパー（VS側）
   const myNameForVs =
     matchedInfo?.myName ||
     me?.display_name ||
@@ -395,7 +402,7 @@ export default function RateMatchPage() {
       </header>
 
       <section className="w-full max-w-md px-4 mt-4 space-y-4">
-        {/* 上の自分情報カード */}
+        {/* 自分情報カード */}
         <div className="bg-white rounded-2xl shadow p-4 space-y-2 text-sky-900">
           <p className="text-sm">
             プレイヤー:{' '}

@@ -3,16 +3,14 @@ import db, { getSeasonDisplayLabel } from '@/lib/db.js';
 
 export async function GET() {
   try {
-    // ★ チャレンジモードのシーズン記録から、存在するシーズン一覧を取得
-    const rows = db
-      .prepare(
-        `
+    const rows = await db.query(
+      `
         SELECT DISTINCT season
         FROM challenge_season_records
         ORDER BY season DESC
-      `
-      )
-      .all();
+      `,
+      []
+    );
 
     const seasons = rows.map((row) => ({
       seasonCode: row.season,

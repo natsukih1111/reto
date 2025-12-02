@@ -5,31 +5,51 @@ import { NextResponse } from 'next/server';
 export async function POST(req) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { userId, username } = body;
 
-    if (!userId && !username) {
+    // どんな名前で来ても拾う
+    const userId =
+      body.userId ??
+      body.authorUserId ??
+      body.authorId ??
+      body.id ??
+      null;
+
+    const usernameOrName =
+      body.username ??
+      body.displayName ??
+      body.authorName ??
+      null;
+
+    if (!userId && !usernameOrName) {
       return NextResponse.json(
         { ok: false, message: 'userId または username が指定されていません。' },
         { status: 400 }
       );
     }
 
-    let user = null;
+    let rows = [];
 
     if (userId) {
-      user = db
-        .prepare(
-          'SELECT id, username, display_name, is_official_author FROM users WHERE id = ?'
-        )
-        .get(userId);
-    } else if (username) {
-      // username か display_name のどちらかに一致したらOKという甘め検索
-      user = db
-        .prepare(
-          'SELECT id, username, display_name, is_official_author FROM users WHERE username = ? OR display_name = ?'
-        )
-        .get(username, username);
+      rows = await db.query(
+        `
+          SELECT id, username, display_name, is_official_author
+          FROM users
+          WHERE id = $1
+        `,
+        [userId]
+      );
+    } else if (usernameOrName) {
+      rows = await db.query(
+        `
+          SELECT id, username, display_name, is_official_author
+          FROM users
+          WHERE username = $1 OR display_name = $1
+        `,
+        [usernameOrName]
+      );
     }
+
+    const user = rows[0];
 
     if (!user) {
       return NextResponse.json(
@@ -38,7 +58,6 @@ export async function POST(req) {
       );
     }
 
-    // すでに公認なら何もしない
     if (user.is_official_author) {
       return NextResponse.json(
         {
@@ -50,10 +69,14 @@ export async function POST(req) {
       );
     }
 
-    // 公認フラグを立てる
-    db.prepare(
-      'UPDATE users SET is_official_author = 1 WHERE id = ?'
-    ).run(user.id);
+    await db.query(
+      `
+        UPDATE users
+        SET is_official_author = 1
+        WHERE id = $1
+      `,
+      [user.id]
+    );
 
     return NextResponse.json(
       {

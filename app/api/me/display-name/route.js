@@ -2,15 +2,17 @@
 import db from '@/lib/db.js';
 import { cookies } from 'next/headers';
 
+// ログイン中ユーザーを取得（Supabase版）
 async function getCurrentUserRow() {
   const cookieStore = await cookies();
   const usernameCookie = cookieStore.get('nb_username')?.value || null;
 
   if (!usernameCookie) return null;
 
-  const row = db
-    .prepare('SELECT * FROM users WHERE username = ?')
-    .get(usernameCookie);
+  const row = await db.get(
+    'SELECT * FROM users WHERE username = $1',
+    [usernameCookie]
+  );
 
   return row || null;
 }
@@ -109,13 +111,15 @@ export async function POST(req) {
       );
     }
 
-    db.prepare(
+    // ★ Supabase(Postgres) 用 UPDATE
+    await db.run(
       `
-      UPDATE users
-      SET display_name = ?, name_change_used = 1
-      WHERE username = ?
-    `
-    ).run(newName, row.username);
+        UPDATE users
+        SET display_name = $1, name_change_used = 1
+        WHERE username = $2
+      `,
+      [newName, row.username]
+    );
 
     return new Response(
       JSON.stringify({

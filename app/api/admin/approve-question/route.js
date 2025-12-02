@@ -17,10 +17,11 @@ export async function POST(request) {
       });
     }
 
-    // 投稿された問題を取得
-    const submission = db
-      .prepare('SELECT * FROM question_submissions WHERE id = ?')
-      .get(id);
+    // 投稿された問題を取得（Supabase / Postgres）
+    const submission = await db.get(
+      'SELECT * FROM question_submissions WHERE id = $1',
+      [id]
+    );
 
     console.log('[approve-question] submission =', submission);
 
@@ -66,18 +67,17 @@ export async function POST(request) {
     if (!authorUserId && submission.created_by) {
       try {
         const key = submission.created_by;
-        const userRow = db
-          .prepare(
-            `
+        const userRow = await db.get(
+          `
             SELECT id, username, display_name, login_id
             FROM users
-            WHERE display_name = ?
-               OR username     = ?
-               OR login_id     = ?
+            WHERE display_name = $1
+               OR username     = $2
+               OR login_id     = $3
             LIMIT 1
-          `
-          )
-          .get(key, key, key);
+          `,
+          [key, key, key]
+        );
 
         console.log(
           '[approve-question] fallback search from created_by =',
@@ -100,16 +100,17 @@ export async function POST(request) {
     console.log('[approve-question] final authorUserId =', authorUserId);
 
     // ステータスを approved に更新 & 古い行なら author_user_id を埋め直す
-    db.prepare(
+    await db.run(
       `
-      UPDATE question_submissions
-      SET
-        status = 'approved',
-        reviewed_at = CURRENT_TIMESTAMP,
-        author_user_id = COALESCE(author_user_id, ?)
-      WHERE id = ?
-    `
-    ).run(authorUserId ?? null, id);
+        UPDATE question_submissions
+        SET
+          status = 'approved',
+          reviewed_at = NOW(),
+          author_user_id = COALESCE(author_user_id, $1)
+        WHERE id = $2
+      `,
+      [authorUserId ?? null, id]
+    );
 
     // ベリー付与（authorUserId が特定できた場合のみ）
     if (authorUserId) {
@@ -120,7 +121,11 @@ export async function POST(request) {
           'for submission id =',
           id
         );
-        addBerriesByUserId(authorUserId, 200, '問題承認報酬');
+        await addBerriesByUserId(
+          authorUserId,
+          200,
+          '問題承認報酬'
+        );
       } catch (e) {
         console.error('addBerriesByUserId (approve) failed:', e);
       }

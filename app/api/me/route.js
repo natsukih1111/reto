@@ -1,11 +1,6 @@
 // file: app/api/me/route.js
 import { NextResponse } from 'next/server';
-import db, {
-  getCurrentSeason,
-  getSeasonDisplayLabel,
-  getUserChallengeSeasonBest,
-  getUserChallengeAllTimeBest,
-} from '@/lib/db.js';
+import db, { getCurrentSeason, getSeasonDisplayLabel } from '@/lib/db.js';
 import { cookies } from 'next/headers';
 
 export async function GET() {
@@ -15,18 +10,22 @@ export async function GET() {
 
     console.log('[api/me] nb_username =', username);
 
-    // クッキーが無い → 未ログイン
     if (!username) {
       return NextResponse.json(
-        { user: null, season: null, season_code: null, challenge: null },
+        {
+          user: null,
+          season: null,
+          season_code: null,
+          challenge: null,
+          challengeSeasonBest: null,
+          challengeAllTimeBest: null,
+        },
         { status: 200 }
       );
     }
 
-    // ユーザー取得（banned も含める）
-    const row = db
-      .prepare(
-        `
+    const row = await db.get(
+      `
         SELECT
           id,
           username,
@@ -43,14 +42,13 @@ export async function GET() {
           login_id,
           banned
         FROM users
-        WHERE username = ?
-      `
-      )
-      .get(username);
+        WHERE username = $1
+      `,
+      [username]
+    );
 
     console.log('[api/me] user row =', row);
 
-    // ユーザーが存在しない or BAN 中 → ログアウト扱い
     if (!row || (row.banned ?? 0) !== 0) {
       try {
         cookieStore.set('nb_username', '', { path: '/', maxAge: 0 });
@@ -59,7 +57,14 @@ export async function GET() {
       }
 
       return NextResponse.json(
-        { user: null, season: null, season_code: null, challenge: null },
+        {
+          user: null,
+          season: null,
+          season_code: null,
+          challenge: null,
+          challengeSeasonBest: null,
+          challengeAllTimeBest: null,
+        },
         { status: 200 }
       );
     }
@@ -68,8 +73,8 @@ export async function GET() {
     const { banned, twitter_url, login_id, ...rest } = row;
 
     let twitterIdSource = twitter_url || login_id || '';
-
     let effectiveTwitterUrl = '';
+
     if (twitterIdSource) {
       let id = twitterIdSource.replace(/^@/, '').trim();
       id = id.replace(/^https?:\/\/(twitter\.com|x\.com)\//, '').trim();
@@ -86,11 +91,48 @@ export async function GET() {
     };
 
     // ===== シーズン関連 =====
-    const seasonCode = getCurrentSeason();                 // 例: 202511
-    const seasonLabel = getSeasonDisplayLabel(seasonCode); // 例: "S4"
+    const seasonCode = getCurrentSeason();
+    const seasonLabel = getSeasonDisplayLabel(seasonCode);
 
-    const seasonBest = getUserChallengeSeasonBest(user.id, seasonCode);
-    const allTimeBest = getUserChallengeAllTimeBest(user.id);
+    // ===== チャレンジモード記録（challenge_runs から集計） =====
+    let seasonBest = null;
+    let allTimeBest = null;
+
+    try {
+      const seasonRow = await db.get(
+        `
+          SELECT MAX(correct_count) AS best_correct
+          FROM challenge_runs
+          WHERE user_id = $1 AND season = $2
+        `,
+        [user.id, seasonCode]
+      );
+
+      const allTimeRow = await db.get(
+        `
+          SELECT MAX(correct_count) AS best_correct
+          FROM challenge_runs
+          WHERE user_id = $1
+        `,
+        [user.id]
+      );
+
+      if (seasonRow && seasonRow.best_correct != null) {
+        seasonBest = {
+          season: seasonCode,
+          best_correct: Number(seasonRow.best_correct) || 0,
+        };
+      }
+
+      if (allTimeRow && allTimeRow.best_correct != null) {
+        allTimeBest = {
+          season: null,
+          best_correct: Number(allTimeRow.best_correct) || 0,
+        };
+      }
+    } catch (e) {
+      console.error('[api/me] challenge stats error', e);
+    }
 
     return NextResponse.json(
       {
@@ -98,9 +140,11 @@ export async function GET() {
         season: seasonLabel,
         season_code: seasonCode,
         challenge: {
-          seasonBest: seasonBest || null,
-          allTimeBest: allTimeBest || null,
+          seasonBest,
+          allTimeBest,
         },
+        challengeSeasonBest: seasonBest,
+        challengeAllTimeBest: allTimeBest,
       },
       { status: 200 }
     );
@@ -112,6 +156,8 @@ export async function GET() {
         season: null,
         season_code: null,
         challenge: null,
+        challengeSeasonBest: null,
+        challengeAllTimeBest: null,
       },
       { status: 500 }
     );

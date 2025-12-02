@@ -2,23 +2,51 @@
 import { NextResponse } from 'next/server';
 import db from '@/lib/db.js';
 
-// ★管理者チェックは一旦ナシ（誰でも叩ける版）
-
-// GET /api/admin/users?mode=ranking|list|banned[&q=...]
+// GET /api/admin/users?mode=ranking|list|banned|stats[&q=...]
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const mode = searchParams.get('mode') || 'ranking';
   const q = (searchParams.get('q') || '').trim();
 
   try {
-    // ① レートランキング
+    // ① ダッシュボード用 stats
+    if (mode === 'stats') {
+      const userCountRow = await db.get(
+        'SELECT COUNT(*) AS count FROM users',
+        []
+      );
+      const pendingQuestionsRow = await db.get(
+        `
+          SELECT COUNT(*) AS count
+          FROM question_submissions
+          WHERE status = 'pending' OR status IS NULL OR status = ''
+        `,
+        []
+      );
+      const openReportsRow = await db.get(
+        `
+          SELECT COUNT(*) AS count
+          FROM question_reports
+          WHERE status = 'open' OR status IS NULL OR status = ''
+        `,
+        []
+      );
+
+      return NextResponse.json({
+        userCount: Number(userCountRow?.count || 0),
+        pendingQuestions: Number(pendingQuestionsRow?.count || 0),
+        openReports: Number(openReportsRow?.count || 0),
+      });
+    }
+
+    // ② レートランキング
     if (mode === 'ranking') {
-      const rows = db
-        .prepare(
-          `
+      const rows = await db.query(
+        `
           SELECT
             id,
             username,
+            display_name,
             rating,
             internal_rating,
             wins,
@@ -30,9 +58,9 @@ export async function GET(req) {
           FROM users
           ORDER BY rating DESC
           LIMIT 200
-        `
-        )
-        .all();
+        `,
+        []
+      );
 
       const users = rows.map((u) => {
         const r = u.internal_rating ?? u.rating ?? 1500;
@@ -55,11 +83,12 @@ export async function GET(req) {
       return NextResponse.json({ ok: true, users });
     }
 
-    // ② ユーザー一覧 / BANリスト
+    // ③ ユーザー一覧 / BANリスト
     let sql = `
       SELECT
         id,
         username,
+        display_name,
         rating,
         internal_rating,
         wins,
@@ -72,16 +101,21 @@ export async function GET(req) {
     const conds = [];
     const params = [];
 
+    // mode=banned のとき
     if (mode === 'banned') {
-      conds.push('banned = 1');
+      params.push(1);
+      const idx = params.length;
+      conds.push(`banned = $${idx}`);
     }
 
+    // キーワード検索（display_name も対象にする）
     if (q) {
-      conds.push(
-        '(username LIKE ? OR login_id LIKE ? OR twitter_url LIKE ?)'
-      );
       const like = `%${q}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like);
+      const base = params.length - 3;
+      conds.push(
+        `(username ILIKE $${base} OR display_name ILIKE $${base + 1} OR login_id ILIKE $${base + 2} OR twitter_url ILIKE $${base + 3})`
+      );
     }
 
     if (conds.length > 0) {
@@ -89,7 +123,7 @@ export async function GET(req) {
     }
     sql += ' ORDER BY id DESC LIMIT 500';
 
-    const users = db.prepare(sql).all(...params);
+    const users = await db.query(sql, params);
 
     return NextResponse.json({ ok: true, users });
   } catch (e) {
@@ -121,9 +155,10 @@ export async function POST(req) {
       );
     }
 
-    const user = db
-      .prepare('SELECT * FROM users WHERE id = ?')
-      .get(userId);
+    const user = await db.get(
+      'SELECT * FROM users WHERE id = $1',
+      [userId]
+    );
     if (!user) {
       return NextResponse.json(
         { ok: false, message: 'ユーザーが見つかりません' },
@@ -133,19 +168,20 @@ export async function POST(req) {
 
     const banned = action === 'ban' ? 1 : 0;
 
-    db.prepare('UPDATE users SET banned = ? WHERE id = ?').run(
-      banned,
-      userId
+    await db.run(
+      'UPDATE users SET banned = $1 WHERE id = $2',
+      [banned, userId]
     );
 
     // ban_logs は失敗しても致命的じゃないので握りつぶす
     try {
-      db.prepare(
+      await db.run(
         `
-        INSERT INTO ban_logs (user_id, action, reason)
-        VALUES (?, ?, ?)
-      `
-      ).run(userId, action, reason);
+          INSERT INTO ban_logs (user_id, action, reason)
+          VALUES ($1, $2, $3)
+        `,
+        [userId, action, reason]
+      );
     } catch (e) {
       console.warn('ban_logs insert failed:', e.message || e);
     }

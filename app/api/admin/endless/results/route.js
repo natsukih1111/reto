@@ -1,80 +1,51 @@
+// file: app/api/admin/endless/results/route.js
 import { NextResponse } from 'next/server';
-import sqlite3 from 'sqlite3';
-import path from 'path';
+import db from '@/lib/db.js';
 
-// Node ランタイムを明示（sqlite3 を使うため）
-export const runtime = 'nodejs';
-
-// quiz.db へのパス（プロジェクト直下の quiz.db を想定）
-const DB_PATH = path.join(process.cwd(), 'quiz.db');
-
-// sqlite3.run を Promise 化するヘルパー
-function runSql(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(DB_PATH);
-    db.run(sql, params, function (err) {
-      if (err) {
-        db.close();
-        return reject(err);
-      }
-      const result = { lastID: this.lastID, changes: this.changes };
-      db.close();
-      resolve(result);
-    });
-  });
-}
-
-// 初回呼び出し時にテーブルが無ければ作る
-async function ensureTable() {
-  const createSql = `
-    CREATE TABLE IF NOT EXISTS endless_results (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      question_id INTEGER NOT NULL,
-      correct INTEGER NOT NULL,          -- 1 = 正解, 0 = 不正解
-      answer_ms INTEGER,                 -- 解答時間ミリ秒
-      logged_at TEXT NOT NULL            -- ISO8601 文字列
-    );
-  `;
-  await runSql(createSql);
-}
-
-export async function POST(request) {
+export async function POST(req) {
   try {
-    const body = await request.json();
-    const { questionId, correct, answerMs, timestamp } = body || {};
+    const body = await req.json().catch(() => ({}));
 
-    if (typeof questionId !== 'number') {
+    const { questionId, correct, answerMs, timestamp } = body;
+
+    if (!questionId) {
+      // questionId が無い時だけ 400 を返す（フロントのバグ）
       return NextResponse.json(
-        { error: 'questionId (number) が必要です' },
-        { status: 400 }
-      );
-    }
-    if (typeof correct !== 'boolean') {
-      return NextResponse.json(
-        { error: 'correct (boolean) が必要です' },
+        {
+          ok: false,
+          error: 'bad_request',
+          message: 'questionId は必須です',
+        },
         { status: 400 }
       );
     }
 
     const loggedAt = timestamp || new Date().toISOString();
-    const ms = typeof answerMs === 'number' ? answerMs : null;
 
-    await ensureTable();
+    const ms =
+      typeof answerMs === 'number' && Number.isFinite(answerMs)
+        ? Math.max(0, Math.floor(answerMs))
+        : null;
 
-    await runSql(
-      `
-      INSERT INTO endless_results (question_id, correct, answer_ms, logged_at)
-      VALUES (?, ?, ?, ?)
-    `,
-      [questionId, correct ? 1 : 0, ms, loggedAt]
-    );
+    // Supabase 用。db.query が使える前提
+    try {
+      await db.query(
+        `
+          INSERT INTO endless_results (question_id, correct, answer_ms, logged_at)
+          VALUES ($1, $2, $3, $4)
+        `,
+        [questionId, correct ? 1 : 0, ms, loggedAt]
+      );
+    } catch (e) {
+      // テーブルが無い／カラム違いなどの時でもフロントは止めない
+      console.error('endless_results への保存エラー(DB)', e);
+      return NextResponse.json({ ok: false }, { status: 200 });
+    }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e) {
-    console.error('endless_results への保存エラー', e);
-    return NextResponse.json(
-      { error: 'internal error', detail: String(e) },
-      { status: 500 }
-    );
+    console.error('/api/admin/endless/results POST error', e);
+    // ここもフロントは止めない方針なので 200
+    return NextResponse.json({ ok: false }, { status: 200 });
   }
 }

@@ -16,9 +16,10 @@ export async function GET() {
       );
     }
 
-    const user = db
-      .prepare('SELECT id FROM users WHERE username = ?')
-      .get(username);
+    const user = await db.get(
+      'SELECT id FROM users WHERE username = $1',
+      [username]
+    );
 
     if (!user) {
       return NextResponse.json(
@@ -27,7 +28,7 @@ export async function GET() {
       );
     }
 
-    const list = getUserMistakesWithQuestions(user.id, 2000);
+    const list = await getUserMistakesWithQuestions(user.id, 2000);
 
     return NextResponse.json({
       ok: true,

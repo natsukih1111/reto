@@ -8,24 +8,25 @@ export async function POST(request) {
 
     const {
       question_id,
+      comment,
+      source_mode,             // 'rate' | 'rate-ai' | 'challenge' など
       reported_by_user_id = null,
-      source_mode,
       battle_id = null,
       challenge_run_id = null,
-      comment,
     } = body;
 
-    if (!question_id || !source_mode || !comment) {
+    // 必須チェック（ユーザーIDは無くてもOK）
+    if (!question_id || !comment || !source_mode) {
       return NextResponse.json(
         {
           error:
-            'question_id / source_mode / comment は必須です（ユーザーIDは無くてもOK）',
+            'question_id / source_mode / comment は必須です（ユーザーIDは省略可）',
         },
         { status: 400 }
       );
     }
 
-    const report = createQuestionReport({
+    const created = await createQuestionReport({
       question_id,
       reported_by_user_id,
       source_mode,
@@ -34,7 +35,7 @@ export async function POST(request) {
       comment,
     });
 
-    return NextResponse.json({ report }, { status: 201 });
+    return NextResponse.json({ report: created }, { status: 201 });
   } catch (err) {
     console.error('POST /api/reports/create error:', err);
     return NextResponse.json(

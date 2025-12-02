@@ -1,3 +1,4 @@
+// file: app/admin/endless/page.js
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
@@ -117,29 +118,47 @@ export default function EndlessAdminPage() {
         const data = await res.json();
 
         const approved = (data.questions || []).map((q, idx) => {
-          const text = q.question ?? '';
-          const originalChoices = Array.isArray(q.options) ? q.options : [];
-          const correctAnswer = q.correct_answer;
-          const altAnswersRaw = q.alt_answers ?? q.alt_answers_json ?? [];
-          const qtRaw = (q.question_type || '').toString().toLowerCase();
+          // --- 問題文 ---
+          const text = q.question_text ?? q.question ?? '';
 
-          // --- 種類判定 ---
-          let type;
-          if (qtRaw === 'text' || originalChoices.length === 0) {
+          // --- 選択肢を options / options_json から取り出す ---
+          let originalChoices = [];
+          try {
+            if (Array.isArray(q.options)) {
+              // 旧API: options がそのまま配列で入っているパターン
+              originalChoices = q.options;
+            } else if (Array.isArray(q.options_json)) {
+              // Supabase: jsonb[] で返ってくるパターン
+              originalChoices = q.options_json;
+            } else if (typeof q.options_json === 'string') {
+              // 文字列で JSON が入っている古いデータ用
+              const parsed = JSON.parse(q.options_json);
+              if (Array.isArray(parsed)) originalChoices = parsed;
+            }
+          } catch {
+            originalChoices = [];
+          }
+
+          const choices = [...originalChoices];
+
+          const correctAnswer = q.correct_answer ?? '';
+
+          // alt_answers / alt_answers_json どちらでも拾う
+          const altAnswersRaw = q.alt_answers ?? q.alt_answers_json ?? [];
+
+          // --- type を DB の値は信じず、battle と同じロジックで判定 ---
+          const tokens = parseCorrectTokens(correctAnswer);
+
+          let type = 'single';
+          if (!choices || choices.length === 0) {
             type = 'text';
-          } else if (
-            qtRaw.includes('multi') ||
-            qtRaw.includes('複数') ||
-            qtRaw.includes('checkbox')
-          ) {
-            type = 'multi';
-          } else if (
-            qtRaw.includes('sort') ||
-            qtRaw.includes('order') ||
-            qtRaw.includes('並び') ||
-            qtRaw.includes('sequence')
-          ) {
-            type = 'order';
+          } else if (tokens.length > 1) {
+            const t = (text || '').replace(/\s/g, '');
+            if (t.includes('順') || t.includes('並') || t.includes('順番')) {
+              type = 'order';
+            } else {
+              type = 'multi';
+            }
           } else {
             type = 'single';
           }
@@ -167,10 +186,7 @@ export default function EndlessAdminPage() {
             }
           }
 
-          // --- 正解情報を battle と同じノリでパース ---
-          const tokens = parseCorrectTokens(correctAnswer);
-          const choices = [...originalChoices];
-
+          // --- 正解インデックスを作る ---
           let correctIndexes = []; // single/multi 用（昇順）
           let orderIndexes = []; // 並び替え用（順番どおり）
 
@@ -193,7 +209,7 @@ export default function EndlessAdminPage() {
                 }
               }
               orderIndexes = idxSeq;
-            } else {
+            } else if (type === 'single' || type === 'multi') {
               const idxSet = new Set();
               for (const token of tokens) {
                 const num = Number(token);
@@ -219,7 +235,10 @@ export default function EndlessAdminPage() {
           if (type === 'text') {
             if (typeof correctAnswer === 'string') {
               answerText = correctAnswer.trim();
-            } else if (Array.isArray(correctAnswer) && correctAnswer.length > 0) {
+            } else if (
+              Array.isArray(correctAnswer) &&
+              correctAnswer.length > 0
+            ) {
               answerText = String(correctAnswer[0]).trim();
             }
           }
@@ -263,7 +282,8 @@ export default function EndlessAdminPage() {
           return {
             id: q.id ?? idx,
             type,
-            text: text || `（問題文が取得できませんでした: id=${q.id}）`,
+            text:
+              text || `（問題文が取得できませんでした: id=${q.id ?? idx}）`,
             choices: shuffledChoices,
             correctIndexes: shuffledCorrectIndexes,
             orderIndexes: shuffledOrderIndexes,
@@ -299,10 +319,13 @@ export default function EndlessAdminPage() {
     if (saved) {
       try {
         const s = JSON.parse(saved);
-        if (window.confirm('前回のエンドレスモードの続きから再開しますか？')) {
+        if (
+          typeof window !== 'undefined' &&
+          window.confirm('前回のエンドレスモードの続きから再開しますか？')
+        ) {
           restoreState(s);
           return;
-        } else {
+        } else if (typeof window !== 'undefined') {
           window.localStorage.removeItem(STATE_KEY);
         }
       } catch (e) {
@@ -311,6 +334,7 @@ export default function EndlessAdminPage() {
     }
 
     startNewDeck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questions]);
 
   // ===== 共通関数 =====
@@ -463,7 +487,7 @@ export default function EndlessAdminPage() {
       }
     }
 
-    // ② サーバ API へ送信（await しない・失敗しても無視）
+    // ② サーバ API へ送信（テーブルが無くても 200 で返すよう route 側で握りつぶす）
     try {
       fetch('/api/admin/endless/results', {
         method: 'POST',
@@ -578,9 +602,11 @@ export default function EndlessAdminPage() {
     if (current && deck.length > 0) {
       saveState(current, deck, deckIndex);
     }
-    alert(
-      '中断しました。このページを閉じてもOKです。\n次回このページを開くと、同じ問題から制限時間フルで再開します。'
-    );
+    if (typeof window !== 'undefined') {
+      alert(
+        '中断しました。このページを閉じてもOKです。\n次回このページを開くと、同じ問題から制限時間フルで再開します。'
+      );
+    }
   };
 
   const resetOrderSelection = () => {
@@ -613,7 +639,7 @@ export default function EndlessAdminPage() {
   // ===== 画面描画 =====
   if (!current) {
     return (
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 24, color: '#e5e7eb', background: '#020617' }}>
         <h2>エンドレスモード（管理者用）</h2>
         <p>問題を読み込み中です…</p>
       </div>
@@ -630,9 +656,20 @@ export default function EndlessAdminPage() {
       : '単一選択問題';
 
   return (
-    <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
-      <h2 style={{ fontSize: 22, marginBottom: 4 }}>エンドレスモード（管理者用）</h2>
-      <p style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>
+    <div
+      style={{
+        padding: 24,
+        maxWidth: 900,
+        margin: '0 auto',
+        background: '#020617',
+        minHeight: '100vh',
+        color: '#e5e7eb',
+      }}
+    >
+      <h2 style={{ fontSize: 22, marginBottom: 4, fontWeight: 700 }}>
+        エンドレスモード（管理者用）
+      </h2>
+      <p style={{ fontSize: 12, opacity: 0.8, marginBottom: 12 }}>
         ・全問題をシャッフルして1周するまで同じ問題は出ません。
         <br />
         ・中断すると次回同じ問題から制限時間フルで再開します。
@@ -651,18 +688,21 @@ export default function EndlessAdminPage() {
           style={{
             padding: '4px 10px',
             borderRadius: 999,
-            background: 'rgba(0,0,0,0.4)',
+            background: 'rgba(15,23,42,0.9)',
+            color: '#e5e7eb',
           }}
         >
           {statusText}
           <br />
-          問題ID: {current.id} ／ この周 {deckIndex}/{deck.length || questions.length}
+          問題ID: {current.id} ／ この周 {deckIndex}/
+          {deck.length || questions.length}
         </div>
         <div
           style={{
             padding: '4px 10px',
             borderRadius: 999,
-            background: 'rgba(0,0,0,0.4)',
+            background: 'rgba(15,23,42,0.9)',
+            color: '#e5e7eb',
           }}
         >
           制限時間: {baseLimit} 秒 ／ 残り{' '}
@@ -672,17 +712,31 @@ export default function EndlessAdminPage() {
 
       <div
         style={{
-          background: 'rgba(3,8,23,0.9)',
+          background: 'rgba(3,8,23,0.95)',
           padding: '14px 16px',
           borderRadius: 12,
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid rgba(148,163,184,0.6)',
           marginBottom: 10,
         }}
       >
-        <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>
+        <div
+          style={{
+            fontSize: 11,
+            opacity: 0.8,
+            marginBottom: 4,
+            color: '#cbd5f5',
+          }}
+        >
           {typeLabel}
         </div>
-        <div style={{ fontSize: 15, marginBottom: 8, lineHeight: 1.6 }}>
+        <div
+          style={{
+            fontSize: 15,
+            marginBottom: 8,
+            lineHeight: 1.6,
+            color: '#f9fafb',
+          }}
+        >
           {current.text}
         </div>
 
@@ -696,8 +750,8 @@ export default function EndlessAdminPage() {
                 width: '100%',
                 padding: '8px 10px',
                 borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.25)',
-                background: 'rgba(0,0,0,0.4)',
+                border: '1px solid rgba(148,163,184,0.9)',
+                background: 'rgba(15,23,42,0.9)',
                 color: '#f9fafb',
                 fontSize: 14,
               }}
@@ -721,16 +775,17 @@ export default function EndlessAdminPage() {
                     gap: 6,
                     padding: '5px 8px',
                     borderRadius: 8,
-                    border: '1px solid rgba(255,255,255,0.15)',
+                    border: '1px solid rgba(148,163,184,0.7)',
                     background:
                       current.type === 'order'
                         ? orderNumber >= 0
-                          ? 'rgba(59,130,246,0.18)'
-                          : 'rgba(255,255,255,0.02)'
+                          ? 'rgba(59,130,246,0.25)'
+                          : 'rgba(15,23,42,0.9)'
                         : checked
-                        ? 'rgba(34,197,94,0.18)'
-                        : 'rgba(255,255,255,0.02)',
+                        ? 'rgba(34,197,94,0.25)'
+                        : 'rgba(15,23,42,0.9)',
                     cursor: 'pointer',
+                    color: '#e5e7eb', // 文字色
                   }}
                 >
                   {current.type === 'order' ? (
@@ -740,6 +795,7 @@ export default function EndlessAdminPage() {
                         textAlign: 'center',
                         fontSize: 12,
                         opacity: orderNumber >= 0 ? 1 : 0.4,
+                        color: '#e5e7eb',
                       }}
                     >
                       {orderNumber >= 0 ? orderNumber + 1 : '・'}
@@ -752,7 +808,7 @@ export default function EndlessAdminPage() {
                       style={{ margin: 0 }}
                     />
                   )}
-                  <span>{choice}</span>
+                  <span style={{ color: '#f9fafb' }}>{choice}</span>
                 </label>
               );
             })}
@@ -760,7 +816,14 @@ export default function EndlessAdminPage() {
         )}
 
         {current.type === 'order' && (
-          <div style={{ marginTop: 6, fontSize: 11, opacity: 0.8 }}>
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              opacity: 0.9,
+              color: '#cbd5f5',
+            }}
+          >
             ※ クリックした順番が 1 → 2 → 3… の順番になります。もう一度クリックで解除。
             <br />
             <button
@@ -770,7 +833,7 @@ export default function EndlessAdminPage() {
                 borderRadius: 999,
                 padding: '4px 10px',
                 border: '1px solid rgba(148,163,184,0.8)',
-                background: 'rgba(15,23,42,0.8)',
+                background: 'rgba(15,23,42,0.9)',
                 color: '#e5e7eb',
                 fontSize: 11,
                 cursor: 'pointer',
@@ -801,7 +864,7 @@ export default function EndlessAdminPage() {
               border: 'none',
               cursor: disabledAnswer ? 'default' : 'pointer',
               background: disabledAnswer
-                ? 'rgba(34,197,94,0.4)'
+                ? 'rgba(34,197,94,0.5)'
                 : 'linear-gradient(135deg,#22c55e,#16a34a)',
               color: '#fff',
               fontWeight: 600,
@@ -816,8 +879,8 @@ export default function EndlessAdminPage() {
             style={{
               borderRadius: 999,
               padding: '6px 12px',
-              border: '1px solid rgba(255,255,255,0.2)',
-              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(148,163,184,0.8)',
+              background: 'rgba(15,23,42,0.9)',
               color: '#e5e7eb',
               fontWeight: 600,
               cursor: 'pointer',
@@ -830,7 +893,7 @@ export default function EndlessAdminPage() {
             style={{
               borderRadius: 999,
               padding: '6px 12px',
-              border: '1px solid rgba(248,113,113,0.6)',
+              border: '1px solid rgba(248,113,113,0.8)',
               background: 'rgba(248,113,113,0.16)',
               color: '#fecaca',
               fontWeight: 600,
@@ -842,9 +905,18 @@ export default function EndlessAdminPage() {
         </div>
       </div>
 
-      <div style={{ fontSize: 12, minHeight: '1.2em' }}>{feedback}</div>
+      <div style={{ fontSize: 12, minHeight: '1.2em', color: '#fbbf24' }}>
+        {feedback}
+      </div>
 
-      <p style={{ fontSize: 11, opacity: 0.7, marginTop: 8 }}>
+      <p
+        style={{
+          fontSize: 11,
+          opacity: 0.8,
+          marginTop: 8,
+          color: '#9ca3af',
+        }}
+      >
         AIなつ用ログはブラウザ localStorage の
         <code> {RESULT_KEY} </code>
         に保存されています（question_id / 正誤 / 解答時間ミリ秒）。

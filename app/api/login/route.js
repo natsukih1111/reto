@@ -1,6 +1,6 @@
 // file: app/api/login/route.js
 import { NextResponse } from 'next/server';
-import db from '@/lib/db';
+import db from '@/lib/db.js';
 
 /**
  * 疑似 Twitter ログイン API
@@ -39,38 +39,47 @@ export async function POST(req) {
 
     const username = handle;
 
-    const getStmt = db.prepare(
-      `SELECT id,
-              username,
-              rating,
-              games_played,
-              win_streak,
-              max_win_streak,
-              twitter_url
-         FROM users
-        WHERE username = ?`
-    );
-
-    let user = getStmt.get(username);
+    // Supabase(Postgres) 版：ユーザー取得
+    const selectSql = `
+      SELECT
+        id,
+        username,
+        rating,
+        games_played,
+        win_streak,
+        max_win_streak,
+        twitter_url
+      FROM users
+      WHERE username = $1
+    `;
+    let user = await db.get(selectSql, [username]);
 
     // なければ新規作成
     if (!user) {
-      const insert = db.prepare(
-        `INSERT INTO users
-           (username, rating, wins, losses, games_played, win_streak, max_win_streak)
-         VALUES (?, 1500, 0, 0, 0, 0, 0)`
+      await db.run(
+        `
+          INSERT INTO users
+            (username, rating, wins, losses, games_played, win_streak, max_win_streak)
+          VALUES
+            ($1, 1500, 0, 0, 0, 0, 0)
+        `,
+        [username]
       );
-      insert.run(username);
-      user = getStmt.get(username);
+
+      user = await db.get(selectSql, [username]);
     }
 
     // twitter_url を https://x.com/ID で更新
     const twitterUrl = `https://x.com/${handle}`;
     if (user.twitter_url !== twitterUrl) {
-      const upd = db.prepare(
-        'UPDATE users SET twitter_url = ? WHERE id = ?'
+      await db.run(
+        `
+          UPDATE users
+          SET twitter_url = $1
+          WHERE id = $2
+        `,
+        [twitterUrl, user.id]
       );
-      upd.run(twitterUrl, user.id);
       user.twitter_url = twitterUrl;
     }
 

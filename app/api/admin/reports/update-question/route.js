@@ -2,6 +2,11 @@
 import { NextResponse } from 'next/server';
 import db from '@/lib/db.js';
 
+async function queryRows(sql, params = []) {
+  const res = await db.query(sql, params);
+  return Array.isArray(res) ? res : res.rows;
+}
+
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -29,36 +34,27 @@ export async function POST(request) {
       optionsJson = JSON.stringify(lines);
     }
 
-    const updateStmt = db.prepare(
+    // question_submissions を更新
+    const result = await queryRows(
       `
-      UPDATE questions
-      SET question_text = ?, correct_answer = ?, options_json = ?
-      WHERE id = ?
-    `
+        UPDATE question_submissions
+           SET question_text = $1,
+               correct_answer = $2,
+               options_json = $3
+         WHERE id = $4
+         RETURNING id, question_text, correct_answer, options_json
+      `,
+      [question_text, correct_answer ?? '', optionsJson, question_id]
     );
 
-    const result = updateStmt.run(
-      question_text,
-      correct_answer ?? '',
-      optionsJson,
-      question_id
-    );
-
-    if (result.changes === 0) {
+    if (result.length === 0) {
       return NextResponse.json(
         { error: '指定された ID の問題が見つかりませんでした' },
         { status: 404 }
       );
     }
 
-    const selectStmt = db.prepare(
-      `
-      SELECT id, question_text, correct_answer, options_json
-      FROM questions
-      WHERE id = ?
-    `
-    );
-    const row = selectStmt.get(question_id);
+    const row = result[0];
 
     return NextResponse.json(
       {

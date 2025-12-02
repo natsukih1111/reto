@@ -8,16 +8,16 @@ import db, {
 import { getTitleFromRating } from '@/lib/title';
 import DeleteUserButton from './DeleteUserButton';
 
-// サーバーコンポーネント
-export default async function AdminUserDetailPage(props) {
-  const { id: idParam } = await props.params; // "1143" みたいな文字列
+// サーバーコンポーネント（Next の params Promise 対応版）
+export default async function AdminUserDetailPage({ params }) {
+  // ★ここがポイント：params は Promise なので await する
+  const resolvedParams = await params;
+  const idParam = resolvedParams?.id;
   const idNum = Number(idParam);
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(idNum);
-
-  if (!user) {
+  if (!idParam || Number.isNaN(idNum)) {
     return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center">
+      <div className="min-h-screen bg-sky-50 text-sky-900 flex flex-col items-center">
         <div className="w-full max-w-md px-4 pt-6">
           <header className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold">ユーザー詳細</h1>
@@ -28,7 +28,34 @@ export default async function AdminUserDetailPage(props) {
               ← ユーザー一覧に戻る
             </Link>
           </header>
-          <p className="text-sm text-rose-300">
+          <p className="text-sm text-rose-500">
+            不正なユーザーIDです。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // users テーブルから取得（Supabase 経由）
+  const user = await db.get(
+    'SELECT * FROM users WHERE id = $1',
+    [idNum]
+  );
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-sky-50 text-sky-900 flex flex-col items-center">
+        <div className="w-full max-w-md px-4 pt-6">
+          <header className="flex items-center justify-between mb-4">
+            <h1 className="text-xl font-bold">ユーザー詳細</h1>
+            <Link
+              href="/admin/users"
+              className="px-3 py-1 rounded-full bg-sky-600 text-xs font-bold text-white"
+            >
+              ← ユーザー一覧に戻る
+            </Link>
+          </header>
+          <p className="text-sm text-rose-500">
             ID {idParam ?? '(不明)'} のユーザーが見つかりませんでした。
           </p>
         </div>
@@ -36,7 +63,7 @@ export default async function AdminUserDetailPage(props) {
     );
   }
 
-  // ===== ここから「マイページ相当の情報」を作る =====
+  // ===== ここから「マイページ相当の情報」を組み立て =====
 
   // レート・称号
   const rawRating = user.internal_rating ?? user.rating ?? 1500;
@@ -54,23 +81,27 @@ export default async function AdminUserDetailPage(props) {
     wins + losses > 0 ? Math.round((wins / (wins + losses)) * 100) : 0;
 
   const berriesForView = user.berries ?? 0;
-  const ownedCharsRow = db
-    .prepare(
-      `SELECT COUNT(*) AS cnt
-       FROM user_characters
-       WHERE user_id = ?`
-    )
-    .get(user.id);
-  const ownedUnique = ownedCharsRow?.cnt ?? 0;
+
+  // 所持キャラ数（owned_characters テーブル想定）
+const ownedCharsRow = await db.get(
+  `
+    SELECT COUNT(*) AS cnt
+    FROM user_characters
+    WHERE user_id = $1
+  `,
+  [user.id]
+);
+
+  const ownedUnique = Number(ownedCharsRow?.cnt || 0);
 
   // チャレンジ成績
-  const seasonRecord = getUserChallengeSeasonBest(user.id, seasonInt);
-  const allTimeRecord = getUserChallengeAllTimeBest(user.id);
+  const seasonRecord = await getUserChallengeSeasonBest(user.id, seasonInt);
+  const allTimeRecord = await getUserChallengeAllTimeBest(user.id);
 
   const challengeSeasonBest = seasonRecord ? seasonRecord.best_correct : 0;
   const challengeAllTimeBest = allTimeRecord ? allTimeRecord.best_correct : 0;
 
-  // Twitterリンク（マイページと同じ動き）
+  // Twitterリンク（マイページと同じノリ）
   let rawTwitter =
     user.twitter_url ||
     user.twitter_link ||
@@ -120,7 +151,7 @@ export default async function AdminUserDetailPage(props) {
       </header>
 
       <main className="w-full max-w-md px-4 pb-10 mt-4 space-y-4">
-        {/* プロフィール（ほぼ /mypage と同じ見た目） */}
+        {/* プロフィール */}
         <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-4 shadow-sm">
           <h2 className="text-lg font-extrabold mb-3">
             プロフィール（ID: {user.id}）
@@ -172,7 +203,6 @@ export default async function AdminUserDetailPage(props) {
             所持ベリー：{berriesForView} ベリー
           </p>
 
-          {/* 名前変更回数（参考情報だけ。ここでは変更ボタン出さない） */}
           <div className="mt-4 text-xs">
             <p className="font-bold mb-1">名前の変更（1度まで）</p>
             {nameChangeUsed >= 1 ? (
@@ -186,7 +216,7 @@ export default async function AdminUserDetailPage(props) {
             )}
           </div>
 
-          {/* Twitterリンク表示（/mypage と同等） */}
+          {/* Twitterリンク */}
           <div className="mt-4">
             <p className="text-sm font-bold">Twitterリンク</p>
             {twitterUrl ? (
@@ -243,7 +273,7 @@ export default async function AdminUserDetailPage(props) {
         <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-4 shadow-sm">
           <h2 className="text-lg font-extrabold mb-2">ガチャ / キャラ図鑑</h2>
           <p className="text-sm mb-2">
-            所持キャラ数：{ownedUnique} 体（user_characters より）
+            所持キャラ数：{ownedUnique} 体（owned_characters より）
           </p>
           <p className="text-xs text-sky-700">
             ※ 管理画面からはガチャ実行・編集はできません。

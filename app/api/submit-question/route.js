@@ -9,15 +9,25 @@ import { addBerriesByUserId } from '@/lib/berries';
  */
 async function getCurrentUser() {
   try {
+    // ★ app router では await cookies() に合わせておく（他ファイルと統一）
     const cookieStore = await cookies();
     const username = cookieStore.get('nb_username')?.value || null;
     if (!username) return null;
 
-    const row = db
-      .prepare(
-        'SELECT id, username, display_name, is_official_author, banned FROM users WHERE username = ?'
-      )
-      .get(username);
+    // Supabase(Postgres) 版：db.get + プレースホルダ $1
+    const row = await db.get(
+      `
+        SELECT
+          id,
+          username,
+          display_name,
+          is_official_author,
+          banned
+        FROM users
+        WHERE username = $1
+      `,
+      [username]
+    );
 
     if (!row) return null;
 
@@ -128,38 +138,37 @@ export async function POST(req) {
 
     const legacyOptions = cleanedOptions.join('||');
 
-    const params = {
-      type: questionType,
-      question: questionText,
-      options: legacyOptions,
-      answer: correctAnswer,
-      status: initialStatus,
-      created_by: authorName || null,
-      is_admin: 0,
-      question_text: questionText,
-      options_json: JSON.stringify(cleanedOptions),
-      correct_answer: correctAnswer,
-      alt_answers_json: JSON.stringify(cleanedAltAnswers),
-      tags_json: JSON.stringify(cleanedTags),
-      author_user_id: authorUserId,
-    };
-
-    // DB へ保存
-    db.prepare(
+    // ===== Supabase(Postgres) 用 INSERT =====
+    await db.run(
       `
-      INSERT INTO question_submissions
-        (type, question, options, answer,
-         status, created_by, is_admin,
-         question_text, options_json, correct_answer,
-         alt_answers_json, tags_json, author_user_id, updated_at)
-      VALUES
-        (@type, @question, @options, @answer,
-         @status, @created_by, @is_admin,
-         @question_text, @options_json, @correct_answer,
-         @alt_answers_json, @tags_json, @author_user_id,
-         CURRENT_TIMESTAMP)
-      `
-    ).run(params);
+        INSERT INTO question_submissions
+          (type, question, options, answer,
+           status, created_by, is_admin,
+           question_text, options_json, correct_answer,
+           alt_answers_json, tags_json, author_user_id, updated_at)
+        VALUES
+          ($1, $2, $3, $4,
+           $5, $6, $7,
+           $8, $9, $10,
+           $11, $12, $13,
+           CURRENT_TIMESTAMP)
+      `,
+      [
+        questionType,                    // $1
+        questionText,                    // $2
+        legacyOptions,                   // $3
+        correctAnswer,                   // $4
+        initialStatus,                   // $5
+        authorName || null,              // $6
+        0,                               // $7 is_admin
+        questionText,                    // $8 question_text
+        JSON.stringify(cleanedOptions),  // $9 options_json
+        correctAnswer,                   // $10 correct_answer
+        JSON.stringify(cleanedAltAnswers), // $11 alt_answers_json
+        JSON.stringify(cleanedTags),     // $12 tags_json
+        authorUserId,                    // $13 author_user_id
+      ]
+    );
 
     // ベリー付与
     if (authorUserId) {
@@ -173,7 +182,8 @@ export async function POST(req) {
           'official=',
           isOfficialAuthor
         );
-        addBerriesByUserId(
+        // ★ 非同期でも同期でも動くように一応 await 付けておく
+        await addBerriesByUserId(
           authorUserId,
           reward,
           isOfficialAuthor

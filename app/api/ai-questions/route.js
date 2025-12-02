@@ -2,85 +2,60 @@
 import { NextResponse } from 'next/server';
 import db from '@/lib/db.js';
 
+export const runtime = 'nodejs';
+
 /**
  * AI戦用の問題一覧
  * - endless_results に登場した question_id だけを返す
- * - まだログが無いときは通常の承認済み問題を全部返す（フォールバック）
+ * - まだログが無いときは承認済みの全問題を返す
  */
 export async function GET() {
   try {
-    let logs;
-
-    // endless_results から解いたことのある question_id を取得
+    let logs = [];
     try {
-      logs = db
-        .prepare(
-          `
+      logs = await db.query(
+        `
           SELECT DISTINCT question_id
           FROM endless_results
-        `
-        )
-        .all();
+        `,
+        []
+      );
     } catch (e) {
       console.warn('endless_results 読み込み失敗 or テーブル無し', e);
       logs = [];
     }
 
-    // ログが1件も無い（or まともな ID が無い）ときは通常版にフォールバック
-    if (!logs || logs.length === 0) {
-      const fallback = db
-        .prepare(
-          `
-          SELECT *
-          FROM question_submissions
-          WHERE status = 'approved'
-          ORDER BY id ASC
-        `
-        )
-        .all();
+    const ids = (logs || [])
+      .map((r) => Number(r.question_id))
+      .filter((v) => Number.isFinite(v));
 
-      return NextResponse.json(fallback);
-    }
-
-    const ids = logs
-      .map((r) => r.question_id)
-      .filter(
-        (v) =>
-          (typeof v === 'number' && Number.isFinite(v)) ||
-          (typeof v === 'string' && v !== '')
-      );
-
+    // ログゼロ or ID無し → フォールバック（承認済み全部）
     if (ids.length === 0) {
-      const fallback = db
-        .prepare(
-          `
+      const fallback = await db.query(
+        `
           SELECT *
           FROM question_submissions
           WHERE status = 'approved'
           ORDER BY id ASC
-        `
-        )
-        .all();
-
-      return NextResponse.json(fallback);
+        `,
+        []
+      );
+      return NextResponse.json(fallback, { status: 200 });
     }
 
-    // IN 句のプレースホルダ (...,?,?)
-    const placeholders = ids.map(() => '?').join(',');
-
-    const rows = db
-      .prepare(
-        `
+    // id 配列で絞り込み（Postgres の ANY を利用）
+    const rows = await db.query(
+      `
         SELECT *
         FROM question_submissions
         WHERE status = 'approved'
-          AND id IN (${placeholders})
+          AND id = ANY($1::int[])
         ORDER BY id ASC
-      `
-      )
-      .all(...ids);
+      `,
+      [ids]
+    );
 
-    return NextResponse.json(rows);
+    return NextResponse.json(rows, { status: 200 });
   } catch (err) {
     console.error('ai-questions GET error:', err);
     return NextResponse.json(

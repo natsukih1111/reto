@@ -68,7 +68,6 @@ export default function AdminUsersPage() {
     }
   };
 
-  // ★確認なしで完全削除
   const deleteUserCompletely = async (user) => {
     if (!user.banned) {
       alert('完全削除は BAN 中のユーザーのみ実行できます。');
@@ -97,6 +96,8 @@ export default function AdminUsersPage() {
       alert('サーバーエラーにより完全削除に失敗しました');
     }
   };
+
+  const displayName = (u) => u.display_name || u.username || `ID:${u.id}`;
 
   return (
     <div className="min-h-screen bg-sky-50 text-slate-900 flex flex-col items-center">
@@ -155,7 +156,7 @@ export default function AdminUsersPage() {
         <div className="flex gap-2 text-sm mb-2">
           <input
             className="flex-1 px-2 py-1 rounded bg-white border border-slate-400"
-            placeholder="ユーザー名・ログインID・Twitter で検索"
+            placeholder="プレイヤーネーム・ログインID・Twitter で検索"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
           />
@@ -183,14 +184,14 @@ export default function AdminUsersPage() {
                   <div>
                     <div className="font-bold">
                       <Link href={`/admin/users/${u.id}`} className="underline">
-                        {u.username}
+                        {displayName(u)}
                       </Link>
                       {u.banned ? (
                         <span className="ml-1 text-rose-500">（BAN中）</span>
                       ) : null}
                     </div>
                     <div className="text-slate-600">
-                      {u.rankName} / {u.rating}pt / {u.wins}勝 {u.losses}敗 / 最長連勝{' '}
+                      {u.rankName} / {Math.round(u.rating ?? 0)}pt / {u.wins}勝 {u.losses}敗 / 最長連勝{' '}
                       {u.best_streak}
                     </div>
                     {u.twitter_url && (
@@ -209,7 +210,6 @@ export default function AdminUsersPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 self-end md:self-auto">
-                  {/* ランキング側は BAN だけ（完全削除は一覧 or BANリストで） */}
                   <button
                     className="px-2 py-1 rounded bg-slate-800 text-white"
                     onClick={() => toggleBan(u)}
@@ -236,14 +236,14 @@ export default function AdminUsersPage() {
                 <div>
                   <div className="font-bold">
                     <Link href={`/admin/users/${u.id}`} className="underline">
-                      {u.username}
+                      {displayName(u)}
                     </Link>
                     {u.banned ? (
                       <span className="ml-1 text-rose-500">（BAN中）</span>
                     ) : null}
                   </div>
                   <div className="text-slate-600">
-                    レート {u.rating} / {u.wins}勝 {u.losses}敗 / 対戦数{' '}
+                    レート {Math.round(u.rating ?? 0)} / {u.wins}勝 {u.losses}敗 / 対戦数{' '}
                     {u.matches_played}
                   </div>
                   {u.twitter_url && (
@@ -261,7 +261,6 @@ export default function AdminUsersPage() {
                   )}
                 </div>
 
-                {/* ▼ ボタンエリア：ここに「完全削除」 + BAN */}
                 <div className="flex gap-1 self-end md:self-auto">
                   {u.banned && (
                     <button
