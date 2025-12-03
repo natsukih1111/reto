@@ -171,10 +171,9 @@ export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
 
-    // 却下処理
+    // ★ 却下処理（pending/approved どちらからでもOK）
     if (body.action === 'reject') {
       const id = Number(body.id);
-      const reason = (body.reason || '').toString();
 
       if (!id) {
         return NextResponse.json(
@@ -183,22 +182,22 @@ export async function POST(request) {
         );
       }
 
+      // reject_reason カラムが無くても動くように、status と reviewed_at だけ更新
       await db.query(
         `
           UPDATE question_submissions
           SET
             status = 'rejected',
-            reject_reason = $2,
             reviewed_at = NOW()
           WHERE id = $1
         `,
-        [id, reason]
+        [id]
       );
 
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    // 編集保存（問題内容の変更）
+    // ▼ ここから編集保存（問題内容の変更）
     const id = Number(body.id);
     if (!id) {
       return NextResponse.json(
