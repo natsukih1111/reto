@@ -50,12 +50,15 @@ export default function AdminQuestionsPage() {
   const [officialMessage, setOfficialMessage] = useState('');
   const [makingOfficial, setMakingOfficial] = useState(false);
 
-  // 公認作問者一覧表示用（NEW）
+  // 公認作問者一覧表示用
   const [showOfficialList, setShowOfficialList] = useState(false);
   const [officialAuthors, setOfficialAuthors] = useState([]);
   const [loadingOfficialList, setLoadingOfficialList] = useState(false);
   const [officialListError, setOfficialListError] = useState('');
 
+  // =========================================
+  // 問題一覧取得
+  // =========================================
   const fetchQuestions = () => {
     const params = new URLSearchParams();
     if (statusFilter) params.set('status', statusFilter);
@@ -71,7 +74,7 @@ export default function AdminQuestionsPage() {
   useEffect(() => {
     fetchQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  }, [statusFilter, selectedTag]); // ステータスかタグが変わったら自動再読み込み
 
   const openEdit = (q) => {
     setEditing({ ...q, tags: q.tags || [], alt_answers: q.alt_answers || [] });
@@ -92,35 +95,32 @@ export default function AdminQuestionsPage() {
     }
   };
 
-  // ★ 承認 → ベリー付与ありの専用APIを叩く
-  const approveQuestion = async (q) => {
-    if (!window.confirm(`問題 #${q.id} を承認しますか？（作問者に +200 ベリー）`)) {
+ // ★ 承認 → ベリー付与ありの専用APIを叩く（ポップアップなし・アラートなし）
+const approveQuestion = async (q) => {
+  try {
+    const res = await fetch('/api/admin/approve-question', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: q.id }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || data.error) {
+      console.error('approve-question error:', data);
+      alert(data.error || '承認に失敗しました');
       return;
     }
 
-    try {
-      const res = await fetch('/api/admin/approve-question', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: q.id }),
-      });
+    // 承認成功 → 一覧を再読み込み
+    fetchQuestions();
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok || data.error) {
-        console.error('approve-question error:', data);
-        alert(data.error || '承認に失敗しました');
-        return;
-      }
-
-      // 承認成功 → 一覧を再読み込み
-      fetchQuestions();
-      alert('承認しました。（作問者に 200 ベリー付与されています）');
-    } catch (e) {
-      console.error('approve-question request failed:', e);
-      alert('承認リクエストに失敗しました');
-    }
-  };
+    // ここには何も表示しない（完全サイレント承認）
+  } catch (e) {
+    console.error('approve-question request failed:', e);
+    alert('承認リクエストに失敗しました');
+  }
+};
 
   const rejectQuestion = async (q) => {
     const reason = window.prompt('却下理由（任意）');
@@ -159,7 +159,9 @@ export default function AdminQuestionsPage() {
     }
   };
 
+  // =========================================
   // 公認作問者にする
+  // =========================================
   const setAsOfficialAuthor = async (q) => {
     const userId = q.author_user_id;
     const username = q.author_username || q.created_by || '';
@@ -171,13 +173,8 @@ export default function AdminQuestionsPage() {
     }
 
     const nameLabel = displayName || username || `ID: ${userId}`;
-    const confirmLabel = displayName
-      ? `「${displayName}（ID: ${userId}）」`
-      : username
-      ? `「${username}（ID: ${userId}）」`
-      : `ID: ${userId}`;
 
-    if (!window.confirm(`${confirmLabel} を公認作問者にしますか？`)) return;
+    if (!window.confirm(`「${nameLabel}」を公認作問者にしますか？`)) return;
 
     try {
       setMakingOfficial(true);
@@ -211,7 +208,9 @@ export default function AdminQuestionsPage() {
     }
   };
 
-  // 公認作問者一覧取得
+  // =========================================
+  // 公認作問者一覧
+  // =========================================
   const loadOfficialAuthors = async () => {
     try {
       setLoadingOfficialList(true);
@@ -230,7 +229,6 @@ export default function AdminQuestionsPage() {
     }
   };
 
-  // 公認作問者解除（公認ではなくす）
   const unsetOfficialAuthor = async (author) => {
     const label =
       author.display_name || author.username || `ID: ${author.id}`;
@@ -264,7 +262,6 @@ export default function AdminQuestionsPage() {
     }
   };
 
-  // 「公認作問者一覧」ボタン押下
   const toggleOfficialList = () => {
     const next = !showOfficialList;
     setShowOfficialList(next);
@@ -273,6 +270,9 @@ export default function AdminQuestionsPage() {
     }
   };
 
+  // =========================================
+  // レンダリング
+  // =========================================
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold mb-2 text-slate-50">問題一覧・承認</h1>
@@ -321,7 +321,7 @@ export default function AdminQuestionsPage() {
             すべて
           </button>
 
-          {/* ★ 公認作問者一覧ボタン（右側） */}
+          {/* 公認作問者一覧ボタン */}
           <button
             className={`px-3 py-1 rounded-full border ml-auto ${
               showOfficialList
@@ -340,6 +340,9 @@ export default function AdminQuestionsPage() {
             placeholder="問題文・答え・作問者名で検索"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') fetchQuestions();
+            }}
           />
           <button
             className="px-3 py-1 rounded bg-sky-600 text-xs text-white"
@@ -370,7 +373,7 @@ export default function AdminQuestionsPage() {
         </div>
       </section>
 
-      {/* 公認作問者一覧（トグル表示） */}
+      {/* 公認作問者一覧 */}
       {showOfficialList && (
         <section className="bg-slate-900 border border-purple-500 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between mb-1">
@@ -386,11 +389,13 @@ export default function AdminQuestionsPage() {
             <div className="text-xs text-rose-300">{officialListError}</div>
           )}
 
-          {!loadingOfficialList && officialAuthors.length === 0 && !officialListError && (
-            <div className="text-xs text-slate-400">
-              公認作問者はまだ登録されていません。
-            </div>
-          )}
+          {!loadingOfficialList &&
+            officialAuthors.length === 0 &&
+            !officialListError && (
+              <div className="text-xs text-slate-400">
+                公認作問者はまだ登録されていません。
+              </div>
+            )}
 
           {!loadingOfficialList && officialAuthors.length > 0 && (
             <div className="max-h-60 overflow-y-auto text-xs">
@@ -410,7 +415,9 @@ export default function AdminQuestionsPage() {
                     <tr key={a.id} className="border-b border-slate-800">
                       <td className="py-1 px-1">{a.id}</td>
                       <td className="py-1 px-1">
-                        {a.display_name || <span className="text-slate-400">（未設定）</span>}
+                        {a.display_name || (
+                          <span className="text-slate-400">（未設定）</span>
+                        )}
                       </td>
                       <td className="py-1 px-1 text-xs">{a.username}</td>
                       <td className="py-1 px-1 text-right">
@@ -528,7 +535,7 @@ export default function AdminQuestionsPage() {
                   ))}
               </div>
 
-              {/* 作問者表示（表示名優先） */}
+              {/* 作問者表示 */}
               {(q.author_display_name ||
                 q.author_username ||
                 q.created_by) && (
@@ -566,7 +573,7 @@ export default function AdminQuestionsPage() {
 
       {/* 編集モーダル */}
       {editing && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify中心 z-50">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 w-full max-w-xl text-xs space-y-2">
             <div className="flex justify-between items-center mb-1">
               <div className="font-bold text-slate-50">
@@ -654,7 +661,8 @@ export default function AdminQuestionsPage() {
               <span>タグ</span>
               <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
                 {[...TAGS_STORY, ...TAGS_OTHER].map((tag) => {
-                  const selected = editing.tags && editing.tags.includes(tag);
+                  const selected =
+                    editing.tags && editing.tags.includes(tag);
                   return (
                     <button
                       key={tag}

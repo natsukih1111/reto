@@ -1,115 +1,217 @@
 // file: app/api/admin/close-season/route.js
-import { NextResponse } from 'next/server';
-import db, { getCurrentSeason, resetRatingsForNewSeason } from '@/lib/db.js';
+import db, {
+  getCurrentSeason,
+  getPreviousSeason,
+  getSeasonDisplayLabel,
+  resetRatingsForNewSeason,
+} from '@/lib/db.js';
 import { addBerriesByUserId } from '@/lib/berries.js';
 
-// 共通本体（GET/POST 両方から呼ぶ）
-async function doCloseSeason() {
-  const season = getCurrentSeason();
+// 共通本体
+async function handleCloseSeason() {
+  try {
+    // 「今の月」を基準に、締め切るシーズンは「1ヶ月前」
+    const currentSeason = getCurrentSeason();
+    const closingSeason = getPreviousSeason(currentSeason);
+    const seasonLabel = getSeasonDisplayLabel(closingSeason);
 
-  // ① 今シーズンのレート戦TOP10を取得（BAN されていないユーザーのみ）
-  const top10 = await db.query(
-    `
-      SELECT
-        id   AS user_id,
-        username,
-        rating,
-        wins,
-        losses,
-        best_streak
-      FROM users
-      WHERE COALESCE(banned, 0) = 0
-      ORDER BY rating DESC, wins DESC, best_streak DESC, id ASC
-      LIMIT 10
-    `,
-    []
-  );
+    // =========================
+    // ① レート戦 TOP10 を保存
+    // =========================
+    const top10 = await db.query(
+      `
+        SELECT
+          id   AS user_id,
+          username,
+          rating,
+          wins,
+          losses,
+          best_streak
+        FROM users
+        WHERE banned = 0
+        ORDER BY rating DESC, wins DESC, best_streak DESC, id ASC
+        LIMIT 10
+      `,
+      []
+    );
 
-  // ② ランキング保存
-  if (top10.length > 0) {
+    // 以前そのシーズンの記録があれば消す（やり直し実行にも対応）
     await db.run(
       `
-        INSERT INTO rate_season_rankings
-          (season, user_id, rank, rating, wins, losses, best_streak)
-        VALUES
-          ${top10
-            .map(
-              (_, i) =>
-                `($1, $${i * 6 + 2}, $${i * 6 + 3}, $${i * 6 + 4}, $${i * 6 + 5}, $${i * 6 + 6}, $${i * 6 + 7})`
-            )
-            .join(', ')}
+        DELETE FROM rate_season_rankings
+        WHERE season = $1
       `,
-      [
-        season,
-        ...top10.flatMap((u, idx) => [
+      [closingSeason]
+    );
+
+    // 新しく記録を挿入
+    for (let i = 0; i < top10.length; i++) {
+      const u = top10[i];
+      await db.run(
+        `
+          INSERT INTO rate_season_rankings
+            (season, user_id, rank, rating, wins, losses, best_streak)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `,
+        [
+          closingSeason,
           u.user_id,
-          idx + 1,
+          i + 1,
           u.rating,
           u.wins,
           u.losses,
           u.best_streak,
-        ]),
-      ]
-    );
-  }
-
-  // ③ 報酬配布（1位～10位）
-  const rewards = [10000, 5000, 4000, 3000, 2500, 2000, 1500, 1000, 500, 500];
-
-  for (let i = 0; i < top10.length; i++) {
-    const u = top10[i];
-    const reward = rewards[i] ?? 0;
-    if (reward > 0) {
-      await addBerriesByUserId(
-        u.user_id,
-        reward,
-        `シーズン${season} レート戦${i + 1}位報酬`
+        ]
       );
     }
-  }
 
-  // ④ レートリセット（1500に戻す）
-  await resetRatingsForNewSeason();
+    // =========================
+    // ② チャレンジモード シーズン集計
+    //    challenge_runs からベストを抜き出して
+    //    challenge_season_records / challenge_alltime_records に反映
+    // =========================
+    const challengeRows = await db.query(
+      `
+        SELECT
+          user_id,
+          MAX(correct_count) AS best_correct,
+          MIN(miss_count)    AS best_miss
+        FROM challenge_runs
+        WHERE season = $1
+        GROUP BY user_id
+      `,
+      [closingSeason]
+    );
 
-  return { season, top10Count: top10.length };
-}
+    // そのシーズン分を一旦消してから入れ直す
+    await db.run(
+      `
+        DELETE FROM challenge_season_records
+        WHERE season = $1
+      `,
+      [closingSeason]
+    );
 
-// 手動用（管理画面のボタンから）
-export async function POST() {
-  try {
-    const result = await doCloseSeason();
-    return NextResponse.json(
-      {
+    for (const row of challengeRows) {
+      const { user_id, best_correct, best_miss } = row;
+
+      // シーズン記録テーブルに保存
+      await db.run(
+        `
+          INSERT INTO challenge_season_records
+            (season, user_id, best_correct, best_miss)
+          VALUES ($1, $2, $3, $4)
+        `,
+        [closingSeason, user_id, best_correct, best_miss]
+      );
+
+      // 歴代ベスト更新（challenge_alltime_records）
+      const existing = await db.get(
+        `
+          SELECT user_id, best_correct, best_miss, best_season
+          FROM challenge_alltime_records
+          WHERE user_id = $1
+        `,
+        [user_id]
+      );
+
+      const existingBestCorrect = existing?.best_correct ?? 0;
+      const existingBestMiss = existing?.best_miss ?? 999999;
+
+      const isBetter =
+        best_correct > existingBestCorrect ||
+        (best_correct === existingBestCorrect &&
+          best_miss < existingBestMiss);
+
+      if (isBetter) {
+        if (existing) {
+          await db.run(
+            `
+              UPDATE challenge_alltime_records
+              SET best_correct = $1,
+                  best_miss    = $2,
+                  best_season  = $3
+              WHERE user_id = $4
+            `,
+            [best_correct, best_miss, closingSeason, user_id]
+          );
+        } else {
+          await db.run(
+            `
+              INSERT INTO challenge_alltime_records
+                (user_id, best_correct, best_miss, best_season)
+              VALUES ($1, $2, $3, $4)
+            `,
+            [user_id, best_correct, best_miss, closingSeason]
+          );
+        }
+      }
+    }
+
+    // このシーズン分の challenge_runs は消して、新シーズンをまっさらからスタート
+    await db.run(
+      `
+        DELETE FROM challenge_runs
+        WHERE season = $1
+      `,
+      [closingSeason]
+    );
+
+    // =========================
+    // ③ レート戦 TOP10 にシーズン報酬ベリー配布
+    // =========================
+    const rewards = [10000, 5000, 4000, 3000, 2500, 2000, 1500, 1000, 500, 500];
+
+    for (let i = 0; i < top10.length; i++) {
+      const u = top10[i];
+      const reward = rewards[i] ?? 0;
+      if (reward > 0) {
+        await addBerriesByUserId(
+          u.user_id,
+          reward,
+          `シーズン${closingSeason} レート戦${i + 1}位報酬`
+        );
+      }
+    }
+
+    // =========================
+    // ④ レートリセット（新シーズン用に 1500 スタートへ）
+    // =========================
+    await resetRatingsForNewSeason();
+
+    return new Response(
+      JSON.stringify({
         ok: true,
-        message: `シーズン ${result.season} を締めました。レートをリセットしました。（TOP10: ${result.top10Count}件）`,
-      },
-      { status: 200 }
+        closedSeason: closingSeason,
+        seasonLabel,
+        message: `シーズン ${seasonLabel} (${closingSeason}) を締め切り、レート＆チャレンジ記録を新シーズン用にリセットしました。`,
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      }
     );
   } catch (e) {
-    console.error('POST /api/admin/close-season error', e);
-    return NextResponse.json(
-      { ok: false, error: 'シーズン締め処理に失敗しました。' },
-      { status: 500 }
+    console.error('/api/admin/close-season error', e);
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: 'server_error',
+        message: e.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      }
     );
   }
 }
 
-// Vercel Cron 用（GET で呼ばれる）
+// Vercel の cron（GET）＆管理画面ボタン（POST）両方対応
 export async function GET() {
-  try {
-    const result = await doCloseSeason();
-    return NextResponse.json(
-      {
-        ok: true,
-        message: `Cron: シーズン ${result.season} を締めました。レートをリセットしました。（TOP10: ${result.top10Count}件）`,
-      },
-      { status: 200 }
-    );
-  } catch (e) {
-    console.error('GET /api/admin/close-season error', e);
-    return NextResponse.json(
-      { ok: false, error: 'シーズン締め処理に失敗しました。' },
-      { status: 500 }
-    );
-  }
+  return handleCloseSeason();
+}
+
+export async function POST() {
+  return handleCloseSeason();
 }

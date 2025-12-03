@@ -15,10 +15,13 @@ const PORT = process.env.PORT || 4000;
 const app = express();
 
 app.use(express.json());
+
+// フロント（Vercel）からのアクセスを許可
+// Render では別ドメインになるので、とりあえず全許可にしている
+// 必要なら process.env.FRONT_ORIGIN で絞り込めるようにしてもOK
 app.use(
   cors({
-    origin: true,
-    credentials: true,
+    origin: "*", // 必ず "*" か Vercel の URL を指定
   })
 );
 
@@ -45,9 +48,8 @@ const httpServer = http.createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: true,
+    origin: "*", // ここも Vercel からの接続を許可
     methods: ["GET", "POST"],
-    credentials: true,
   },
 });
 
@@ -173,7 +175,6 @@ async function getUserTeamByUserId(userId) {
     return [];
   }
 }
-
 
 // ───────── ユーザー取得ヘルパー（id or name） ─────────
 async function getUserFromPlayer(player) {
@@ -894,5 +895,5 @@ io.on("connection", (socket) => {
 });
 
 httpServer.listen(PORT, () => {
-  log(`Socket.IO server listening on http://localhost:${PORT}`);
+  log(`Socket.IO server listening on port ${PORT}`);
 });

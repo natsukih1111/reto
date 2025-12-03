@@ -47,8 +47,9 @@ export async function GET(req) {
       [userId]
     );
 
+    // ★ slot を必ず number にキャストするのがポイント
     const team = rows.map((row) => ({
-      slot: row.slot,
+      slot: Number(row.slot) || 0,
       character_id: row.character_id,
       stars: row.stars ?? 1,
       char_no: row.char_no ?? row.character_id,
@@ -143,7 +144,7 @@ export async function POST(req) {
     );
 
     const team = rows.map((row) => ({
-      slot: row.slot,
+      slot: Number(row.slot) || 0, // ← ここも number に
       character_id: row.character_id,
       stars: row.stars ?? 1,
       char_no: row.char_no ?? row.character_id,

@@ -89,11 +89,9 @@ function getRainbowInnerBg(stars) {
 
 // API からのオブジェクト → 星数/元レア度の共通取り出し
 function getStarsValue(ch) {
-  // API は stars で来ているが、念のため star もフォロー
   return ch.stars ?? ch.star ?? 1;
 }
 function getBaseRarity(ch) {
-  // API は base_rarity で来ているが、過去互換で rarity も見る
   return ch.base_rarity ?? ch.rarity ?? 1;
 }
 
@@ -103,7 +101,8 @@ function getBaseRarity(ch) {
 export default function CharactersPage() {
   const [user, setUser] = useState(null);
   const [characters, setCharacters] = useState([]);
-  const [teamIds, setTeamIds] = useState([]);
+  const [teamIds, setTeamIds] = useState([]); // [character_id,...]
+
   const [sortMode, setSortMode] = useState('acquired'); // acquired | rarity | no
 
   const [loadingUser, setLoadingUser] = useState(true);
@@ -145,6 +144,8 @@ export default function CharactersPage() {
     const load = async () => {
       try {
         setLoadingData(true);
+        setError('');
+        setMessage('');
 
         const uid = user.id;
         const [cR, tR] = await Promise.all([
@@ -159,10 +160,11 @@ export default function CharactersPage() {
         setTeamIds(
           (tj.team || [])
             .filter((t) => t && t.character_id != null)
-            .map((t) => t.character_id)
+            .map((t) => Number(t.character_id))
         );
       } catch (e) {
         console.error(e);
+        setError('キャラ情報の取得に失敗しました');
       } finally {
         setLoadingData(false);
       }
@@ -173,7 +175,8 @@ export default function CharactersPage() {
   /* ------------------------------
      キャラクリック → マイチーム切替
   ------------------------------ */
-  const toggleCharacter = (id) => {
+  const toggleCharacter = (idRaw) => {
+    const id = Number(idRaw);
     setError('');
     setMessage('');
 
@@ -197,21 +200,62 @@ export default function CharactersPage() {
     if (!user) return;
     try {
       setSaving(true);
+      setError('');
+      setMessage('');
+
+      const numericIds = teamIds
+        .map((id) => Number(id))
+        .filter((n) => Number.isFinite(n));
+
       const r = await fetch('/api/user/team', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: user.id,
-          character_ids: teamIds,
+          user_id: Number(user.id),
+          character_ids: numericIds,
         }),
       });
 
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || '保存に失敗');
+      if (!r.ok) throw new Error(j.error || '保存に失敗しました');
 
       setMessage('マイチームを保存しました！');
     } catch (e) {
-      setError(e.message);
+      console.error(e);
+      setError(e.message || 'マイチームの保存に失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* ------------------------------
+     マイチームリセット
+  ------------------------------ */
+  const resetTeam = async () => {
+    if (!user) return;
+    try {
+      setSaving(true);
+      setError('');
+      setMessage('');
+
+      setTeamIds([]); // 先にフロント側も空に
+
+      const r = await fetch('/api/user/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: Number(user.id),
+          character_ids: [], // 空で送る → user_teams 全削除
+        }),
+      });
+
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'リセットに失敗しました');
+
+      setMessage('マイチームをリセットしました');
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'マイチームのリセットに失敗しました');
     } finally {
       setSaving(false);
     }
@@ -231,7 +275,10 @@ export default function CharactersPage() {
     return a.id - b.id;
   });
 
-  const isSelected = (id) => teamIds.includes(id);
+  const isSelected = (idRaw) => {
+    const id = Number(idRaw);
+    return teamIds.includes(id);
+  };
 
   /* ============================================================
      UIレンダリング
@@ -273,12 +320,12 @@ export default function CharactersPage() {
           <h2 className="font-bold text-lg mb-3">マイチーム（最大5体）</h2>
 
           {error && (
-            <div className="bg-red-200 text-red-800 px-3 py-1 rounded mb-2">
+            <div className="bg-red-200 text-red-800 px-3 py-1 rounded mb-2 text-sm">
               {error}
             </div>
           )}
           {message && (
-            <div className="bg-green-200 text-green-800 px-3 py-1 rounded mb-2">
+            <div className="bg-green-200 text-green-800 px-3 py-1 rounded mb-2 text-sm">
               {message}
             </div>
           )}
@@ -286,7 +333,9 @@ export default function CharactersPage() {
           <div className="grid grid-cols-5 gap-2 mb-3">
             {[0, 1, 2, 3, 4].map((i) => {
               const id = teamIds[i];
-              const ch = characters.find((x) => x.character_id === id);
+              const ch = characters.find(
+                (x) => Number(x.character_id) === Number(id)
+              );
 
               return (
                 <div
@@ -309,17 +358,28 @@ export default function CharactersPage() {
             })}
           </div>
 
-          <button
-            onClick={saveTeam}
-            disabled={saving || teamIds.length === 0}
-            className={`w-full py-2 rounded-full text-white font-bold ${
-              saving || teamIds.length === 0
-                ? 'bg-sky-300'
-                : 'bg-sky-600 hover:brightness-110'
-            }`}
-          >
-            {saving ? '保存中…' : 'この編成で保存する'}
-          </button>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={saveTeam}
+              disabled={saving || teamIds.length === 0}
+              className={`flex-1 py-2 rounded-full text-white font-bold ${
+                saving || teamIds.length === 0
+                  ? 'bg-sky-300'
+                  : 'bg-sky-600 hover:brightness-110'
+              }`}
+            >
+              {saving ? '保存中…' : 'この編成で保存する'}
+            </button>
+
+            <button
+              type="button"
+              onClick={resetTeam}
+              disabled={saving}
+              className="px-4 py-2 rounded-full border border-slate-400 bg-white text-xs font-bold text-slate-700"
+            >
+              編成リセット
+            </button>
+          </div>
         </section>
 
         {/* -------------------

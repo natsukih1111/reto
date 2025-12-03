@@ -3,18 +3,19 @@
 
 import { useEffect, useState } from 'react';
 
-// 仮のユーザーID（ここはログイン中ユーザーのIDに置き換えてください）
-const USER_ID = 1;
-
 export default function MyTeamPage() {
   const [loading, setLoading] = useState(true);
+
+  const [userId, setUserId] = useState(null);
+
   const [characters, setCharacters] = useState([]); // 図鑑
-  const [teamIds, setTeamIds] = useState([]);       // [character_id,...]
+  const [teamIds, setTeamIds] = useState([]);       // ['123','496', ...] 文字列で管理
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  // 図鑑 & マイチームの読み込み
+  // ===== 初期ロード =====
   useEffect(() => {
     async function load() {
       try {
@@ -22,9 +23,23 @@ export default function MyTeamPage() {
         setError('');
         setMessage('');
 
+        // 1) /api/me からログイン中ユーザー取得
+        const meRes = await fetch('/api/me');
+        const meJson = await meRes.json();
+
+        if (!meRes.ok || !meJson.user) {
+          setError('ログイン情報の取得に失敗しました。ログインし直してください。');
+          setLoading(false);
+          return;
+        }
+
+        const uid = Number(meJson.user.id);
+        setUserId(uid);
+
+        // 2) 所持キャラ & マイチームを並行取得
         const [charsRes, teamRes] = await Promise.all([
-          fetch(`/api/user/characters?user_id=${USER_ID}`),
-          fetch(`/api/user/team?user_id=${USER_ID}`),
+          fetch(`/api/user/characters?user_id=${uid}`),
+          fetch(`/api/user/team?user_id=${uid}`),
         ]);
 
         const charsJson = await charsRes.json();
@@ -37,13 +52,17 @@ export default function MyTeamPage() {
           throw new Error(teamJson.error || 'マイチームの取得に失敗しました');
         }
 
-        setCharacters(charsJson.characters || []);
+        // 所持キャラ（Supabase 版）
+        const ownedChars = charsJson.characters || [];
+        setCharacters(ownedChars);
 
+        // マイチーム（character_id を文字列にそろえて保存）
         const team = teamJson.team || [];
-        setTeamIds(team.map((t) => t.character_id));
+        const ids = team.map((t) => String(t.character_id));
+        setTeamIds(ids);
       } catch (e) {
         console.error(e);
-        setError(e.message);
+        setError(e.message || '読み込み中にエラーが発生しました');
       } finally {
         setLoading(false);
       }
@@ -53,13 +72,15 @@ export default function MyTeamPage() {
   }, []);
 
   // 図鑑キャラをクリック → マイチームに追加 / 削除
-  const toggleCharacter = (characterId) => {
+  const toggleCharacter = (characterIdRaw) => {
     setMessage('');
     setError('');
 
+    const idStr = String(characterIdRaw);
+
     // すでに入っている → 外す
-    if (teamIds.includes(characterId)) {
-      setTeamIds(teamIds.filter((id) => id !== characterId));
+    if (teamIds.includes(idStr)) {
+      setTeamIds(teamIds.filter((id) => id !== idStr));
       return;
     }
 
@@ -69,22 +90,29 @@ export default function MyTeamPage() {
       return;
     }
 
-    setTeamIds([...teamIds, characterId]);
+    setTeamIds([...teamIds, idStr]);
   };
 
   // 保存ボタン
   const saveTeam = async () => {
+    if (!userId) return;
+
     try {
       setSaving(true);
       setError('');
       setMessage('');
 
+      // 文字列ID → 数値ID にして送る
+      const numericIds = teamIds
+        .map((id) => Number(id))
+        .filter((n) => Number.isFinite(n));
+
       const res = await fetch('/api/user/team', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: USER_ID,
-          character_ids: teamIds,
+          user_id: userId,
+          character_ids: numericIds,
         }),
       });
 
@@ -97,14 +125,21 @@ export default function MyTeamPage() {
       setMessage('マイチームを保存しました！');
     } catch (e) {
       console.error(e);
-      setError(e.message);
+      setError(e.message || 'マイチームの保存に失敗しました');
     } finally {
       setSaving(false);
     }
   };
 
+  // 編成リセット（DB 上も空にする）
+  const resetTeam = async () => {
+    setTeamIds([]);
+    await saveTeam(); // 空配列で保存 → user_teams 全削除と同じ
+  };
+
   // 図鑑の中で、このキャラがマイチームに選ばれているか
-  const isSelected = (characterId) => teamIds.includes(characterId);
+  const isSelected = (characterId) =>
+    teamIds.includes(String(characterId));
 
   return (
     <main
@@ -112,7 +147,7 @@ export default function MyTeamPage() {
         minHeight: '100vh',
         padding: '24px',
         backgroundColor: '#d8f1ff', // 薄い水色
-        color: '#222',              // 濃い文字色で見やすく
+        color: '#222',
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
       }}
@@ -195,8 +230,12 @@ export default function MyTeamPage() {
             }}
           >
             {[0, 1, 2, 3, 4].map((slot) => {
-              const cid = teamIds[slot];
-              const char = characters.find((c) => c.character_id === cid);
+              const cidStr = teamIds[slot]; // '123' みたいな文字列
+              const char =
+                characters.find(
+                  (c) => String(c.character_id) === cidStr
+                ) || null;
+
               return (
                 <div
                   key={slot}
@@ -228,6 +267,7 @@ export default function MyTeamPage() {
                           fontSize: '14px',
                           fontWeight: 'bold',
                           marginBottom: '2px',
+                          color: '#111',
                         }}
                       >
                         {char.name}
@@ -235,10 +275,11 @@ export default function MyTeamPage() {
                       <div
                         style={{
                           fontSize: '12px',
-                          color: '#666',
+                          color: '#444',
                         }}
                       >
-                        レア度: {char.rarity} / ★{char.star}
+                        {/* Supabase 版: base_rarity / stars を使う */}
+                        レア度: {char.base_rarity} / ★{char.stars}
                       </div>
                     </>
                   ) : (
@@ -256,27 +297,52 @@ export default function MyTeamPage() {
             })}
           </div>
 
-          <button
-            onClick={saveTeam}
-            disabled={saving}
+          <div
             style={{
               marginTop: '16px',
-              padding: '10px 20px',
-              borderRadius: '999px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: 'bold',
-              background:
-                saving || teamIds.length === 0
-                  ? '#b0c7de'
-                  : 'linear-gradient(90deg, #4a8dff, #5bc5ff)',
-              color: '#ffffff',
-              opacity: saving ? 0.8 : 1,
+              display: 'flex',
+              gap: '12px',
+              flexWrap: 'wrap',
             }}
           >
-            {saving ? '保存中...' : 'この編成で保存する'}
-          </button>
+            <button
+              onClick={saveTeam}
+              disabled={saving || !userId}
+              style={{
+                padding: '10px 20px',
+                borderRadius: '999px',
+                border: 'none',
+                cursor: saving || !userId ? 'default' : 'pointer',
+                fontSize: '14px',
+                fontWeight: 'bold',
+                background:
+                  saving || teamIds.length === 0 || !userId
+                    ? '#b0c7de'
+                    : 'linear-gradient(90deg, #4a8dff, #5bc5ff)',
+                color: '#ffffff',
+                opacity: saving ? 0.8 : 1,
+              }}
+            >
+              {saving ? '保存中...' : 'この編成で保存する'}
+            </button>
+
+            <button
+              type="button"
+              onClick={resetTeam}
+              style={{
+                padding: '10px 16px',
+                borderRadius: '999px',
+                border: '1px solid #888',
+                backgroundColor: '#ffffff',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                color: '#333',
+              }}
+            >
+              編成をリセットする
+            </button>
+          </div>
         </section>
 
         {/* 図鑑一覧 */}
@@ -316,13 +382,13 @@ export default function MyTeamPage() {
               {characters.map((ch) => {
                 const selected = isSelected(ch.character_id);
 
-                // レア度に応じて枠を少し変える（派手すぎない程度に）
+                // レア度に応じて枠色（base_rarity）
                 const borderColor =
-                  ch.rarity >= 7
+                  ch.base_rarity >= 7
                     ? '#ffb400'
-                    : ch.rarity >= 5
+                    : ch.base_rarity >= 5
                     ? '#ff7a7a'
-                    : ch.rarity >= 3
+                    : ch.base_rarity >= 3
                     ? '#7ab0ff'
                     : '#cccccc';
 
@@ -359,7 +425,7 @@ export default function MyTeamPage() {
                         marginBottom: '2px',
                       }}
                     >
-                      レア度: {ch.rarity}
+                      レア度: {ch.base_rarity}
                     </div>
                     <div
                       style={{
@@ -367,7 +433,7 @@ export default function MyTeamPage() {
                         color: '#555',
                       }}
                     >
-                      ★ {ch.star}
+                      ★ {ch.stars}
                     </div>
                     {selected && (
                       <div

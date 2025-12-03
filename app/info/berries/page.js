@@ -61,7 +61,7 @@ export default function BerriesInfoPage() {
         <section className="bg-white border border-sky-200 rounded-2xl p-4 shadow-sm">
           <h2 className="text-lg font-bold mb-2">ランキング報酬</h2>
           <p className="text-sm mb-2">
-            レート戦・チャレンジモードそれぞれで、シーズン終了時のランキングに応じてベリーがもらえます。
+            レート戦・チャレンジモードそれぞれで、シーズン終了時のランキングに応じてベリーがもらえます。(毎月1日リセット）
           </p>
           <table className="w-full text-sm border-collapse">
             <thead>
