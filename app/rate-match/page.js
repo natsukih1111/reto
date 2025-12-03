@@ -145,12 +145,18 @@ export default function RateMatchPage() {
   // socket.io 接続
   useEffect(() => {
     if (!socket) {
-      const host =
-        typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const protocol =
-        typeof window !== 'undefined' ? window.location.protocol : 'http:';
-      const url = `${protocol}//${host}:4000`;
-      socket = io(url);
+      // 本番: NEXT_PUBLIC_SOCKET_URL (例: https://narebato-socket.onrender.com)
+      // ローカル: http://localhost:4000
+      const url =
+        process.env.NEXT_PUBLIC_SOCKET_URL ||
+        (typeof window !== 'undefined'
+          ? `${window.location.protocol}//${window.location.hostname}:4000`
+          : 'http://localhost:4000');
+
+      console.log('socket connect to:', url);
+      socket = io(url, {
+        transports: ['websocket'],
+      });
     }
 
     const s = socket;
