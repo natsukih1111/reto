@@ -9,6 +9,7 @@ export default function HomePage() {
   const [onlineCount, setOnlineCount] = useState('×');
   const [season, setSeason] = useState('');
   const [loading, setLoading] = useState(true);
+  const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
 
   useEffect(() => {
     // 自分の情報
@@ -36,6 +37,18 @@ export default function HomePage() {
         setOnlineCount(value);
       })
       .catch(() => setOnlineCount('×'));
+
+    // お知らせ未読件数
+    fetch('/api/announcements/unread-count')
+      .then((res) => res.json())
+      .then((data) => {
+        const c =
+          typeof data.count === 'number' && data.count > 0
+            ? data.count
+            : 0;
+        setUnreadAnnouncements(c);
+      })
+      .catch(() => setUnreadAnnouncements(0));
   }, []);
 
   const ratingText =
@@ -56,15 +69,36 @@ export default function HomePage() {
 
         {/* 右上ボタンエリア */}
         <div className="flex flex-col items-end gap-1">
-          <Link
-            href="/mypage"
-            className="border-2 border-sky-600 px-3 py-1 rounded-full text-sm font-bold text-sky-700 bg-white shadow-sm"
-          >
-            マイページ
-          </Link>
+          {/* 上段：お知らせアイコン + マイページ */}
+          <div className="flex items-center gap-1">
+            <div className="relative">
+              <Link
+                href="/announcements"
+                className="flex items-center justify-center w-9 h-9 rounded-full bg-white border-2 border-amber-500 text-amber-600 text-lg shadow-sm hover:bg-amber-50"
+                aria-label="運営からのお知らせ"
+              >
+                📢
+              </Link>
+              {/* 未読があるときだけ赤丸を表示（ログイン中のみ） */}
+              {me && unreadAnnouncements > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-[11px] font-bold text-white flex items-center justify-center border border-white shadow-sm">
+                  {unreadAnnouncements > 9 ? '9+' : unreadAnnouncements}
+                </span>
+              )}
+            </div>
+
+            <Link
+              href="/mypage"
+              className="border-2 border-sky-600 px-3 py-1 rounded-full text-sm font-bold text-sky-700 bg-white shadow-sm hover:bg-sky-50"
+            >
+              マイページ
+            </Link>
+          </div>
+
+          {/* 下段：ログイン / 新規登録 */}
           <Link
             href="/login"
-            className="px-3 py-1 rounded-full text-[12px] font-bold text-sky-700 bg-sky-100 border border-sky-400 shadow-sm"
+            className="px-3 py-1 rounded-full text-[12px] font-bold text-sky-700 bg-sky-100 border border-sky-400 shadow-sm hover:bg-sky-200"
           >
             ログイン / 新規登録
           </Link>

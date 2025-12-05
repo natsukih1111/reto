@@ -1,4 +1,4 @@
-// file: app/battle/page.js
+// file: app/battle/page_inner.js
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
@@ -147,11 +147,11 @@ function BattlePageInner() {
 
   const addLog = (msg) => setLog((prev) => [...prev, msg]);
 
-  // ★ ミス記録用: レート戦で不正解だった問題を /api/mistakes/add に送る
+  // ★ ミス記録用: レート戦・AI戦で不正解だった問題を /api/mistakes/add に送る
   const logMistake = (question) => {
     if (!question || !question.id) return;
-    if (isAiMode) return; // AI戦はレート扱いにしない（必要ならここを外せばOK）
 
+    // レート戦・AIなつ戦 共通で「間違えた問題」を記録
     fetch('/api/mistakes/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

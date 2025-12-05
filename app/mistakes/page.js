@@ -112,7 +112,7 @@ export default function MistakesPage() {
         {/* 説明 */}
         <section className="bg-white border border-sky-100 rounded-3xl p-4 shadow-sm text-sm text-slate-800">
           <p>
-            レート戦・チャレンジモードで
+            レート戦・チャレンジモード・AIなつ戦で
             <span className="font-bold">間違えた直近2000問</span>
             を表示します。正解を確認して、復習に使ってください。
           </p>
