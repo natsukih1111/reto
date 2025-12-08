@@ -14,102 +14,73 @@ export default function ChallengeStartPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const [alreadyPlayed, setAlreadyPlayed] = useState(false);
 
-  // 自分の情報取得
   useEffect(() => {
-    const fetchMe = async () => {
+    (async () => {
       try {
         const res = await fetch('/api/me', { cache: 'no-store' });
-        if (!res.ok) {
-          throw new Error('failed to fetch /api/me');
-        }
         const data = await res.json();
         setMe(data.user || null);
-      } catch (e) {
-        console.error(e);
-        setErrorMessage('ユーザー情報の取得に失敗しました。時間をおいて再度お試しください。');
+
+        // 投稿状況を確認して「15問投稿で復活」を反映する
+        const stats = await fetch('/api/my-questions/stats').then((r) =>
+          r.json()
+        );
+
+        if (stats.usedToday && stats.todayPosts < 15) {
+          setAlreadyPlayed(true);
+        } else {
+          setAlreadyPlayed(false);
+        }
+      } catch {
+        setMe(null);
       } finally {
         setLoadingMe(false);
       }
-    };
-
-    fetchMe();
+    })();
   }, []);
 
   const handleStart = async () => {
     if (!me || loadingStart) return;
-
     setErrorMessage('');
     setLoadingStart(true);
 
     try {
       const res = await fetch('/api/challenge/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: me.id }),
       });
 
-      const data = await res.json().catch(() => ({}));
-
-      if (res.status === 403) {
-        // 今日分は終わり
-        setAlreadyPlayed(true);
-        setErrorMessage(
-          data.error || '今日はすでにチャレンジモードに挑戦しています。'
-        );
-        return;
-      }
+      const data = await res.json();
 
       if (!res.ok) {
-        setErrorMessage(
-          data.error ||
-            'チャレンジの開始に失敗しました。時間をおいて再度お試しください。'
-        );
+        setErrorMessage(data.error || '開始できませんでした');
         return;
       }
 
-      // ここで問題リストをセッションストレージに保存しておく（次の画面で読む想定）
-      if (data && data.questions) {
-        try {
-          const payload = {
-            season: data.season,
-            questions: data.questions,
-            startedAt: Date.now(),
-          };
-          sessionStorage.setItem('challenge_session', JSON.stringify(payload));
-        } catch (e) {
-          console.warn('sessionStorage に保存できませんでした', e);
-        }
-      }
-
-      // プレイ画面へ遷移（このページではスタートだけ）
-      router.push('/challenge/play');
-    } catch (e) {
-      console.error(e);
-      setErrorMessage(
-        'サーバーエラーが発生しました。時間をおいて再度お試しください。'
+      sessionStorage.setItem(
+        'challenge_session',
+        JSON.stringify({
+          questions: data.questions,
+          startedAt: Date.now(),
+        })
       );
+
+      router.push('/challenge/play');
+    } catch {
+      setErrorMessage('サーバーエラーが発生しました。');
     } finally {
       setLoadingStart(false);
     }
   };
 
-  const disabled = loadingMe || loadingStart || alreadyPlayed || !me;
+  const disabled = loadingMe || loadingStart || !me || alreadyPlayed;
 
   return (
     <div className="min-h-screen bg-sky-50 flex flex-col items-center text-sky-900">
-      {/* ヘッダー */}
       <header className="w-full max-w-md px-4 pt-6 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <img
-            src="/logo-skull.png"
-            alt="ナレバト"
-            className="w-8 h-8 object-contain"
-          />
-          <h1 className="text-xl md:text-2xl font-extrabold tracking-widest">
-            チャレンジモード
-          </h1>
-        </div>
-        {/* グローバルナビ：ホームへ戻る */}
+        <h1 className="text-xl md:text-2xl font-extrabold tracking-widest">
+          チャレンジモード
+        </h1>
         <Link
           href="/"
           className="border-2 border-sky-600 px-3 py-1 rounded-full text-sm font-bold text-sky-700 bg-white shadow-sm"
@@ -119,70 +90,47 @@ export default function ChallengeStartPage() {
       </header>
 
       <main className="w-full max-w-md px-4 pb-10 mt-6 space-y-6">
-        {/* 説明ブロック */}
+        {/* ルール */}
         <section className="bg-white border border-sky-100 rounded-3xl p-4 shadow-sm">
-          <h2 className="text-lg font-extrabold mb-2 text-sky-800">
-            ルール
-          </h2>
+          <h2 className="text-lg font-extrabold mb-2 text-sky-800">ルール</h2>
           <ul className="list-disc list-inside text-sm space-y-1 text-slate-800">
-            <li>1日1回だけ挑戦できます。</li>
-            <li>全ての承認済み問題からランダムに出題されます。</li>
-            <li>3問間違えた時点で終了です。</li>
-            <li>1問正解するごとに 50 ベリー獲得できます。</li>
+            <li>基本的に1日1回挑戦できます。</li>
+            <li>その日に問題を15問投稿するとチャレンジ権が復活します。</li>
+            <li>投稿による復活は翌日へ持ち越せません（1日1回のみ）。</li>
+            <li>全承認済み問題からランダム出題。</li>
+            <li>3問ミスしたら終了。</li>
+            <li>正解ごとに 50 ベリー獲得。</li>
           </ul>
-          <p className="mt-3 text-xs text-slate-600">
-            ※ 途中でページを閉じたりリロードした場合も、その日の挑戦は消費されます。
-          </p>
         </section>
 
-        {/* ステータス表示 */}
+        {/* ステータス */}
         <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-4 shadow-sm">
-          <h2 className="text-base font-extrabold mb-2 text-sky-800">
-            今日のチャレンジ
-          </h2>
-          {loadingMe && (
-            <p className="text-sm text-slate-700">ユーザー情報を読み込み中…</p>
-          )}
-          {!loadingMe && me && !alreadyPlayed && (
-            <p className="text-sm text-slate-800">
-              プレイヤー：<span className="font-bold">{me.display_name ?? me.username}</span>
-              <br />
-              今日はまだチャレンジしていません。
+          {alreadyPlayed ? (
+            <p className="text-sm text-rose-700 font-bold">
+              ● 今日のチャレンジは既に挑戦済みです（15問投稿で復活）
             </p>
-          )}
-          {!loadingMe && alreadyPlayed && (
-            <p className="text-sm font-bold text-rose-700">
-              今日分のチャレンジは終了しました。
-            </p>
-          )}
-          {!loadingMe && !me && (
-            <p className="text-sm text-rose-700">
-              ユーザー情報が取得できませんでした。いったんホームに戻ってください。
+          ) : (
+            <p className="text-sm text-emerald-700 font-bold">
+              ● 今日はまだ挑戦できます
             </p>
           )}
 
-          {/* エラーメッセージ */}
           {errorMessage && (
-            <p className="mt-3 text-xs text-rose-600">{errorMessage}</p>
+            <p className="mt-2 text-xs text-red-600">{errorMessage}</p>
           )}
 
-          {/* スタートボタン */}
           <div className="mt-4">
             <button
               type="button"
-              onClick={handleStart}
               disabled={disabled}
+              onClick={handleStart}
               className={`w-full py-3 rounded-full text-sm font-bold shadow ${
                 disabled
-                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                  : 'bg-orange-400 hover:bg-orange-500 active:translate-y-[1px] text-white'
+                  ? 'bg-slate-300 text-slate-500'
+                  : 'bg-orange-400 hover:bg-orange-500 text-white'
               }`}
             >
-              {alreadyPlayed
-                ? '今日のチャレンジは終了しています'
-                : loadingStart
-                ? 'チャレンジを準備中…'
-                : 'チャレンジを始める'}
+              {disabled ? '挑戦できません' : 'チャレンジを始める'}
             </button>
           </div>
         </section>

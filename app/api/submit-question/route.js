@@ -3,26 +3,15 @@ import db from '@/lib/db.js';
 import { cookies } from 'next/headers';
 import { addBerriesByUserId } from '@/lib/berries';
 
-/**
- * 現在ログイン中のユーザーをクッキーから取得
- * ※ BAN されている場合は null を返す
- */
 async function getCurrentUser() {
   try {
-    // ★ app router では await cookies() に合わせておく（他ファイルと統一）
     const cookieStore = await cookies();
     const username = cookieStore.get('nb_username')?.value || null;
     if (!username) return null;
 
-    // Supabase(Postgres) 版：db.get + プレースホルダ $1
     const row = await db.get(
       `
-        SELECT
-          id,
-          username,
-          display_name,
-          is_official_author,
-          banned
+        SELECT id, username, display_name, is_official_author, banned
         FROM users
         WHERE username = $1
       `,
@@ -30,42 +19,21 @@ async function getCurrentUser() {
     );
 
     if (!row) return null;
-
-    // BAN 中ならクッキー消して null 扱い
-    if ((row.banned ?? 0) !== 0) {
-      try {
-        cookieStore.set('nb_username', '', { path: '/', maxAge: 0 });
-      } catch (e) {
-        console.warn('failed to clear cookie for banned user', e);
-      }
-      return null;
-    }
+    if (row.banned) return null;
 
     const { banned, ...safe } = row;
     return safe;
-  } catch (e) {
-    console.warn('getCurrentUser failed', e);
+  } catch {
     return null;
   }
 }
 
-/**
- * 問題投稿 API
- * - 一般ユーザー: status=pending / 投稿時 +100 ベリー
- * - 公認作問者: status=approved / 投稿時 +300 ベリー
- */
 export async function POST(req) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json();
 
-    let {
-      type,            // "single" | "multi" | "text" | "order"
-      question,        // 問題文
-      options = [],    // 選択肢 or 並び替え
-      answer,          // 正解
-      tags = [],       // タグ
-      altAnswers = [], // 記述の別解
-    } = body;
+    let { type, question, options = [], answer, tags = [], altAnswers = [] } =
+      body;
 
     const questionText = (question || '').trim();
     const correctAnswer = (answer || '').trim();
@@ -77,10 +45,7 @@ export async function POST(req) {
           error: 'bad_request',
           message: '問題文を入力してください。',
         }),
-        {
-          status: 400,
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        }
+        { status: 400 }
       );
     }
 
@@ -91,132 +56,227 @@ export async function POST(req) {
       currentUser?.display_name || currentUser?.username || null;
     const isOfficialAuthor = currentUser?.is_official_author ?? 0;
 
-    // 公認作問者は最初から approved
     const initialStatus = isOfficialAuthor ? 'approved' : 'pending';
 
-    // 整形
     const cleanedOptions = Array.isArray(options)
-      ? options.map((o) => (o || '').trim()).filter(Boolean)
+      ? options.map((o) => o.trim()).filter(Boolean)
       : [];
+
     const cleanedTags = Array.isArray(tags) ? tags : [];
     const cleanedAltAnswers = Array.isArray(altAnswers)
-      ? altAnswers.map((a) => (a || '').trim()).filter(Boolean)
+      ? altAnswers.map((a) => a.trim()).filter(Boolean)
       : [];
 
     const questionType =
       type || (cleanedOptions.length > 0 ? 'single' : 'text');
 
-    // ★ 複数回答（multi）のバリデーション
-    //   - 正解は 1 個以上 必須
-    //   - 不正解は 0 個でも OK（＝全て正解でも投稿可能）
+    // 複数選択バリデーション
     if (questionType === 'multi') {
-      // correctAnswer の形式が "1||3" などの可能性も考えて、"||" で分解して数を数える
       const parts = correctAnswer
         .split('||')
         .map((s) => s.trim())
         .filter(Boolean);
-
       if (parts.length < 1) {
         return new Response(
           JSON.stringify({
             ok: false,
             error: 'bad_request',
-            message:
-              '複数回答問題では、少なくとも1つは正解を指定してください。',
+            message: '複数回答では正解を1つ以上指定してください。',
           }),
-          {
-            status: 400,
-            headers: { 'Content-Type': 'application/json; charset=utf-8' },
-          }
+          { status: 400 }
         );
       }
-      // ※ 不正解の個数チェックは一切しないので、
-      //    ・正解1 + 不正解3
-      //    ・正解のみ（不正解0）
-      //    どちらも投稿OKになります。
     }
 
     const legacyOptions = cleanedOptions.join('||');
 
-    // ===== Supabase(Postgres) 用 INSERT =====
+    // ---- INSERT ----
     await db.run(
       `
         INSERT INTO question_submissions
-          (type, question, options, answer,
-           status, created_by, is_admin,
+          (type, question, options, answer, status, created_by, is_admin,
            question_text, options_json, correct_answer,
            alt_answers_json, tags_json, author_user_id, updated_at)
         VALUES
-          ($1, $2, $3, $4,
-           $5, $6, $7,
-           $8, $9, $10,
-           $11, $12, $13,
-           CURRENT_TIMESTAMP)
+          ($1, $2, $3, $4, $5, $6, 0,
+           $7, $8, $9,
+           $10, $11, $12, CURRENT_TIMESTAMP)
       `,
       [
-        questionType,                    // $1
-        questionText,                    // $2
-        legacyOptions,                   // $3
-        correctAnswer,                   // $4
-        initialStatus,                   // $5
-        authorName || null,              // $6
-        0,                               // $7 is_admin
-        questionText,                    // $8 question_text
-        JSON.stringify(cleanedOptions),  // $9 options_json
-        correctAnswer,                   // $10 correct_answer
-        JSON.stringify(cleanedAltAnswers), // $11 alt_answers_json
-        JSON.stringify(cleanedTags),     // $12 tags_json
-        authorUserId,                    // $13 author_user_id
+        questionType,
+        questionText,
+        legacyOptions,
+        correctAnswer,
+        initialStatus,
+        authorName,
+        questionText,
+        JSON.stringify(cleanedOptions),
+        correctAnswer,
+        JSON.stringify(cleanedAltAnswers),
+        JSON.stringify(cleanedTags),
+        authorUserId,
       ]
     );
 
     // ベリー付与
     if (authorUserId) {
       const reward = isOfficialAuthor ? 300 : 100;
-      try {
-        console.log(
-          '[submit-question] add berries',
-          reward,
-          'to user_id=',
-          authorUserId,
-          'official=',
-          isOfficialAuthor
-        );
-        // ★ 非同期でも同期でも動くように一応 await 付けておく
-        await addBerriesByUserId(
-          authorUserId,
-          reward,
-          isOfficialAuthor
-            ? '公認作問者・問題投稿報酬'
-            : '問題投稿報酬'
-        );
-      } catch (e) {
-        console.error('addBerriesByUserId (submit) failed:', e);
-      }
+      await addBerriesByUserId(
+        authorUserId,
+        reward,
+        isOfficialAuthor
+          ? '公認作問者・問題投稿報酬'
+          : '問題投稿報酬'
+      );
     }
 
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        status: initialStatus,
-      }),
-      {
-        status: 201,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    // ================================
+    // ★ 投稿数 +1 → 「15件投稿した」という情報だけ持つ
+    //    チャレンジの復活判定は /api/challenge/start 側でやる
+    // ================================
+    try {
+      if (authorUserId) {
+        const today = new Date().toISOString().slice(0, 10);
+
+        // 今日の投稿数 +1
+        await db.run(
+          `
+            INSERT INTO challenge_daily_posts (user_id, date, count)
+            VALUES ($1, $2, 1)
+            ON CONFLICT (user_id, date)
+            DO UPDATE SET count = challenge_daily_posts.count + 1
+          `,
+          [authorUserId, today]
+        );
       }
+    } catch (e) {
+      console.error('daily post counter failed:', e);
+    }
+
+    // ================================
+    // ★ タグ投稿数 → エンブレム獲得チェック
+    //    自分の全投稿（承認待ち＋承認済み）から tags_json を集計
+    // ================================
+    try {
+      if (authorUserId && cleanedTags.length > 0 && currentUser) {
+        const username = currentUser.username || '';
+        const displayName = currentUser.display_name || '';
+        const userIdText = String(authorUserId);
+
+        // 自分の投稿を、author_user_id と created_by の全パターンで拾う
+        const tagRows = await db.query(
+          `
+            SELECT tags_json
+            FROM question_submissions
+            WHERE
+              (
+                author_user_id = $1
+                OR created_by = $2
+                OR created_by = $3
+                OR created_by = $4
+              )
+              AND status IN ('pending', 'approved')
+          `,
+          [authorUserId, username, displayName, userIdText]
+        );
+
+        // tags_json を安全に配列に変換してカウント
+        const tagCount = {};
+        for (const r of tagRows) {
+          let arr = [];
+
+          if (Array.isArray(r.tags_json)) {
+            arr = r.tags_json.map(String);
+          } else if (typeof r.tags_json === 'string') {
+            const s = r.tags_json.trim();
+            if (s) {
+              try {
+                const parsed = JSON.parse(s);
+                if (Array.isArray(parsed)) {
+                  arr = parsed.map(String);
+                }
+              } catch {
+                // 変な形式は無視
+              }
+            }
+          }
+
+          for (const tag of arr) {
+            tagCount[tag] = (tagCount[tag] || 0) + 1;
+          }
+        }
+
+        // ★ titles テーブルの id に合わせる（1〜18 がストーリー系と想定）
+        const EMBLEMS = [
+          { id: 1,  tags: ['東の海'],                 needed: 30 },
+          { id: 2,  tags: ['偉大なる航路突入'],       needed: 30 },
+          { id: 3,  tags: ['アラバスタ'],             needed: 30 },
+          { id: 4,  tags: ['空島'],                   needed: 30 },
+          { id: 5,  tags: ['DBF'],                   needed: 30 },
+          // 管理画面では「W7、エニエス・ロビー」という１つのタグ
+          { id: 6,  tags: ['W7、エニエス・ロビー'],   needed: 30 },
+          { id: 7,  tags: ['スリラーバーク'],         needed: 30 },
+          // シャボン＆女ヶ島は合算
+          {
+            id: 8,
+            tags: ['シャボンディ諸島', '女ヶ島'],
+            needed: 30,
+            mixed: true,
+          },
+          { id: 9,  tags: ['インペルダウン'],         needed: 30 },
+          { id: 10, tags: ['頂上戦争'],               needed: 30 },
+          { id: 11, tags: ['魚人島'],                 needed: 30 },
+          { id: 12, tags: ['パンクハザード'],         needed: 30 },
+          { id: 13, tags: ['ドレスローザ'],           needed: 30 },
+          { id: 14, tags: ['ゾウ'],                   needed: 30 },
+          { id: 15, tags: ['WCI'],                    needed: 30 },
+          { id: 16, tags: ['ワノ国'],                 needed: 30 },
+          { id: 17, tags: ['エッグヘッド'],           needed: 30 },
+          { id: 18, tags: ['エルバフ'],               needed: 30 },
+        ];
+
+        for (const emblem of EMBLEMS) {
+          let total = 0;
+
+          if (emblem.mixed) {
+            // 複数タグの合算
+            total = emblem.tags.reduce(
+              (sum, t) => sum + (tagCount[t] || 0),
+              0
+            );
+          } else {
+            total = tagCount[emblem.tags[0]] || 0;
+          }
+
+          if (total >= emblem.needed) {
+            await db.run(
+              `
+                INSERT INTO user_titles (user_id, title_id)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id, title_id) DO NOTHING
+              `,
+              [authorUserId, emblem.id]  // ← 数値IDをそのまま入れる
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.error('emblem check failed:', e);
+    }
+
+
+    return new Response(
+      JSON.stringify({ ok: true, status: initialStatus }),
+      { status: 201 }
     );
   } catch (e) {
-    console.error('submit-question POST error:', e);
     return new Response(
       JSON.stringify({
         ok: false,
         error: 'failed_to_submit',
-        message: e.message || String(e),
+        message: e.message,
       }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      }
+      { status: 500 }
     );
   }
 }

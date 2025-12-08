@@ -4,174 +4,179 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
+const MAX_SLOTS = 36;
+
 export default function TitlesPage() {
-  const [loading, setLoading] = useState(true);
   const [titles, setTitles] = useState([]);
-  const [equippedTitle, setEquippedTitle] = useState(null);
-  const [message, setMessage] = useState('');
+  const [owned, setOwned] = useState(new Set());
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch('/api/me/titles');
-        const data = await res.json();
+        const r1 = await fetch('/api/titles');
+        const d1 = await r1.json().catch(() => ({}));
+        const list = d1.titles || [];
+        setTitles(list);
 
-        if (!res.ok || !data.ok) {
-          setMessage(data.message || '称号情報の取得に失敗しました。');
-          return;
-        }
+        const r2 = await fetch('/api/titles/owned');
+        const d2 = await r2.json().catch(() => ({}));
+        // 文字列化しておくと id が数値でも文字でも安全
+        const ownedSet = new Set((d2.owned || []).map((v) => String(v)));
+        setOwned(ownedSet);
 
-        setTitles(data.titles || []);
-        setEquippedTitle(data.equippedTitle ?? null);
+        // 最初に選択するインデックス
+        setSelectedIndex(0);
       } catch (e) {
         console.error(e);
-        setMessage('称号情報の取得中にエラーが発生しました。');
-      } finally {
-        setLoading(false);
       }
     };
 
     load();
   }, []);
 
-  const handleEquip = async (titleId) => {
-    setMessage('');
-    try {
-      const res = await fetch('/api/me/titles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ titleId }),
+  // スロットを 36 個に埋める
+  const slots = [];
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    if (i < titles.length) {
+      slots.push({ type: 'title', data: titles[i] });
+    } else {
+      slots.push({
+        type: 'placeholder',
+        data: {
+          id: `placeholder-${i}`,
+          name: 'アップデート待ち',
+          condition_text: '今後のアップデートで新しいエンブレムが追加されます。',
+        },
       });
-      const data = await res.json();
-
-      if (!res.ok || !data.ok) {
-        setMessage(data.message || '称号の装備に失敗しました。');
-        return;
-      }
-
-      setEquippedTitle(data.equippedTitle ?? null);
-      setMessage(`「${data.equippedTitle}」を装備しました。`);
-    } catch (e) {
-      console.error(e);
-      setMessage('称号の装備中にエラーが発生しました。');
     }
-  };
+  }
 
-  const handleUnequip = async () => {
-    setMessage('');
-    try {
-      const res = await fetch('/api/me/titles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ unequip: true }),
-      });
-      const data = await res.json();
-
-      if (!res.ok || !data.ok) {
-        setMessage(data.message || '称号の解除に失敗しました。');
-        return;
-      }
-
-      setEquippedTitle(null);
-      setMessage('称号を解除しました。');
-    } catch (e) {
-      console.error(e);
-      setMessage('称号の解除中にエラーが発生しました。');
-    }
-  };
+  const current = slots[selectedIndex] || null;
+  const currentIsOwned =
+    current?.type === 'title' && owned.has(String(current.data.id));
 
   return (
-    <div className="min-h-screen bg-sky-50 flex flex-col items-center text-sky-900">
+    <div className="min-h-screen bg-sky-50 text-sky-900 flex flex-col items-center">
+      {/* ヘッダー */}
       <header className="w-full max-w-md px-4 pt-6 flex items-center justify-between">
-        <h1 className="text-xl font-extrabold text-sky-900">称号一覧</h1>
-        <Link
-          href="/mypage"
-          className="border-2 border-sky-600 px-3 py-1 rounded-full text-sm font-bold text-sky-700 bg-white shadow-sm"
-        >
-          マイページへ
+        <h1 className="text-xl font-extrabold tracking-widest">
+          称号・エンブレム一覧
+        </h1>
+        <Link href="/mypage" className="underline text-sm text-sky-700">
+          戻る
         </Link>
       </header>
 
-      <main className="w-full max-w-md px-4 pb-10 mt-4">
-        {loading ? (
-          <p className="text-sky-700">読み込み中です...</p>
-        ) : (
-          <>
-            <section className="bg-white rounded-2xl shadow p-4 mb-4">
-              <h2 className="text-lg font-extrabold mb-2">現在の装備</h2>
-              <p className="text-sm">
-                自由称号：
-                {equippedTitle ? (
-                  <span className="inline-block ml-1 px-2 py-0.5 rounded-full bg-purple-100 border border-purple-300 text-[11px] font-bold text-purple-700">
-                    {equippedTitle}
-                  </span>
-                ) : (
-                  <span className="text-slate-600 text-sm">なし</span>
-                )}
-              </p>
-              {equippedTitle && (
+      <main className="w-full max-w-md px-4 pb-10 mt-4 space-y-4">
+        {/* グリッド */}
+        <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-3 shadow-sm">
+          <div className="grid grid-cols-6 gap-2">
+            {slots.map((slot, idx) => {
+              const isPlaceholder = slot.type === 'placeholder';
+              const t = slot.data;
+              const isSelected = idx === selectedIndex;
+              const key = String(t.id);
+
+              const has =
+                !isPlaceholder && owned.has(String(t.id));
+
+              return (
                 <button
-                  onClick={handleUnequip}
-                  className="mt-3 px-3 py-1 rounded-full bg-slate-200 text-slate-700 text-xs font-bold"
+                  key={key}
+                  type="button"
+                  onClick={() => setSelectedIndex(idx)}
+                  className={
+                    'relative aspect-square rounded-xl border-2 flex items-center justify-center ' +
+                    (isSelected
+                      ? 'border-amber-500 bg-amber-50'
+                      : 'border-sky-300 bg-sky-50')
+                  }
                 >
-                  称号を外す
+                  {isPlaceholder ? (
+                    <span className="text-[9px] leading-tight text-sky-400 text-center">
+                      アップデート
+                      <br />
+                      待ち
+                    </span>
+                  ) : has ? (
+                    <img
+                      src={t.image_url}
+                      alt={t.name}
+                      className="w-4/5 h-4/5 object-contain drop-shadow-lg"
+                    />
+                  ) : (
+                    // 未入手：空の箱（シルエット無し）
+                    <div className="w-4/5 h-4/5 rounded-lg border border-amber-900/40 bg-amber-900/5 shadow-inner" />
+                  )}
                 </button>
-              )}
-            </section>
+              );
+            })}
+          </div>
+        </section>
 
-            <section className="bg-white rounded-2xl shadow p-4">
-              <h2 className="text-lg font-extrabold mb-2">所持称号一覧</h2>
+{/* 詳細パネル */}
+<section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-4 shadow-sm text-sm">
+  {current?.type === 'title' ? (
+    <>
+      <h2 className="text-base font-extrabold mb-3">
+        選択中のエンブレム
+      </h2>
 
-              {titles.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  まだ称号を所持していません。
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {titles.map((t) => {
-                    const isEquipped = t.title_name === equippedTitle;
-                    return (
-                      <li
-                        key={t.id}
-                        className="flex items-center justify-between border rounded-xl px-3 py-2 bg-sky-50"
-                      >
-                        <div>
-                          <p className="text-sm font-bold">{t.title_name}</p>
-                          <p className="text-[11px] text-slate-500">
-                            取得日時:{' '}
-                            {t.obtained_at
-                              ? new Date(t.obtained_at).toLocaleString('ja-JP')
-                              : '-'}
-                          </p>
-                        </div>
-                        <div>
-                          {isEquipped ? (
-                            <span className="text-[11px] font-bold text-purple-700">
-                              装備中
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handleEquip(t.id)}
-                              className="px-3 py-1 rounded-full bg-sky-500 text-white text-[11px] font-bold"
-                            >
-                              この称号を装備
-                            </button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
+      <div className="flex items-center gap-4">
+        {/* === 透過PNGそのままの立体バッジビュー === */}
+        <div className="w-28 h-28 flex items-center justify-center">
+          {currentIsOwned && current.data.image_url ? (
+            <img
+              src={current.data.image_url}
+              alt={current.data.name}
+              className="
+                w-full h-full object-contain 
+               
+                transition-transform duration-300
+                hover:-translate-y-1 hover:rotate-2
+                active:translate-y-0 active:rotate-0
+              "
+            />
+          ) : (
+            <div className="text-[11px] text-sky-600 font-bold">
+              未入手
+            </div>
+          )}
+        </div>
 
-            {message && (
-              <p className="mt-3 text-[11px] text-rose-600 whitespace-pre-line">
-                {message}
-              </p>
+        {/* テキスト情報 */}
+        <div className="flex-1 space-y-1">
+          <p className="mb-1">
+            名称：
+            <span className="font-bold">{current.data.name}</span>
+          </p>
+          <p className="mb-1 text-sky-700">
+            入手条件：{current.data.condition_text}
+          </p>
+          <p className="mt-1 text-xs">
+            状態：
+            {currentIsOwned ? (
+              <span className="text-emerald-700 font-bold">入手済み</span>
+            ) : (
+              <span className="text-rose-700 font-bold">未入手</span>
             )}
-          </>
-        )}
+          </p>
+        </div>
+      </div>
+    </>
+  ) : (
+    <>
+      <h2 className="text-base font-extrabold mb-2">
+        アップデート待ち
+      </h2>
+      <p className="text-sky-700 text-sm">
+        今後のアップデートで新しいエンブレムが追加される予定です。
+      </p>
+    </>
+  )}
+</section>
+
       </main>
     </div>
   );

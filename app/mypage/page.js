@@ -237,12 +237,19 @@ const allTimeBestCorrect = challengeAllTimeBest;
               <p className="text-lg font-bold">
                 {displayName || user.username}
               </p>
-              <p className="text-xs">
-                称号：{' '}
+              <p className="text-xs flex items-center gap-2">
+                <span>称号：</span>
                 <span className="inline-block px-2 py-0.5 rounded-full bg-orange-100 border border-orange-300 text-[11px] font-bold text-orange-700">
                   {displayTitle}
                 </span>
+                <Link
+                  href="/titles"
+                  className="text-[10px] text-sky-700 underline ml-1"
+                >
+                  称号一覧
+                </Link>
               </p>
+
               <p className="text-xs text-sky-700">
                 表示レート：<span className="font-bold">{user.rating}</span>
               </p>

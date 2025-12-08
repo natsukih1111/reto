@@ -186,7 +186,7 @@ export default function SniperSoloPage() {
     return () => clearInterval(id);
   }, [status]);
 
-  // 終了時ベスト更新
+  // 終了時ベスト更新（ローカル保存）
   useEffect(() => {
     if (status !== 'finished') return;
     if (typeof window === 'undefined') return;
@@ -205,6 +205,27 @@ export default function SniperSoloPage() {
     } catch {
       // 無視
     }
+  }, [status, score]);
+
+  // ★ 終了時に称号チェックAPIを呼ぶ
+  useEffect(() => {
+    if (status !== 'finished') return;
+    // スコア0なら送らなくてもいい（どっちでもOK）
+    if (score <= 0) return;
+
+    (async () => {
+      try {
+        await fetch('/api/titles/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sniperScore: score,
+          }),
+        });
+      } catch {
+        // 失敗してもゲームには影響させない
+      }
+    })();
   }, [status, score]);
 
   const current = questions[idx] || null;

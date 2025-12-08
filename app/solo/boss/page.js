@@ -688,18 +688,36 @@ export default function SoloBossPage() {
     const correctCount = answerHistory.filter((h) => h.isCorrect).length;
     const missCount = answerHistory.length - correctCount;
 
-    // 勝利時のみベスト更新
+    // 勝利時のみベスト更新 & 称号チェック
+    let clearMs = null;
     if (result === 'win' && battleStartRef.current) {
-      const elapsed = Date.now() - battleStartRef.current;
+      clearMs = Date.now() - battleStartRef.current;
+
       if (difficultyKey) {
         updateBestRecord(
           difficultyKey,
-          elapsed,
+          clearMs,
           correctCount,
           missCount,
           battleTeamSnapshot
         );
       }
+
+      // ★ ソロ称号チェック API 呼び出し
+      const noTeam =
+        !battleTeamSnapshot || battleTeamSnapshot.length === 0;
+
+      fetch('/api/solo/titles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'boss',
+          value: clearMs, // ms
+          difficulty: difficultyKey,
+          result: 'win',
+          noTeam,
+        }),
+      }).catch(() => {});
     }
 
     // ログ API（正解数だけ送る簡易仕様）

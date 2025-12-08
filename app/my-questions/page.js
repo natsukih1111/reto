@@ -13,6 +13,9 @@ export default function MyQuestionsPage() {
   const [loadingQuestions, setLoadingQuestions] = useState(true);
   const [error, setError] = useState('');
 
+  // ★ 投稿数などの統計
+  const [stats, setStats] = useState(null);
+
   // ① /api/me から自分のユーザー情報を取る
   useEffect(() => {
     fetch('/api/me')
@@ -26,6 +29,22 @@ export default function MyQuestionsPage() {
         setUser(null);
       })
       .finally(() => setLoadingUser(false));
+  }, []);
+
+  // ★ ①.5 /api/my-questions/stats を叩いて投稿数など取得
+  useEffect(() => {
+    fetch('/api/my-questions/stats')
+      .then(async (r) => {
+        if (!r.ok) return null;
+        return r.json();
+      })
+      .then((data) => {
+        if (data) setStats(data);
+      })
+      .catch((e) => {
+        console.error(e);
+        setStats(null);
+      });
   }, []);
 
   // ② /api/my-questions を叩く
@@ -99,19 +118,32 @@ export default function MyQuestionsPage() {
       </header>
 
       <main className="w-full max-w-md px-4 pb-10 mt-4 space-y-4">
-        {/* ユーザー情報の簡単な概要 */}
+        {/* ユーザー情報の簡単な概要 ＋ 投稿数 */}
         <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-4 shadow-sm">
           <p className="text-sm text-sky-800">
-            ユーザー名：<span className="font-bold">{user.username}</span>
+            ユーザー名：
+            <span className="font-bold">{user.username}</span>
           </p>
           {season && (
             <p className="text-xs text-sky-700 mt-1">
               現在のシーズン：{season}
             </p>
           )}
+
+          {/* ★ ここが今回追加した表示部分 */}
+          {stats && (
+            <>
+              <p className="text-xs text-sky-700 mt-2">
+                総投稿数：{stats.total} 問（承認済み：{stats.approved} 問）
+              </p>
+              <p className="text-xs text-sky-700">
+                今日の投稿：{stats.todayPosts} / 15 問
+              </p>
+            </>
+          )}
         </section>
 
-        {/* 投稿一覧本体 */}
+        {/* 投稿一覧本体（ここ以降は元のまま） */}
         <section className="bg-sky-100 border-2 border-sky-500 rounded-3xl p-4 shadow-sm">
           <h2 className="text-lg font-extrabold mb-2 text-sky-700">
             投稿一覧
@@ -148,7 +180,6 @@ export default function MyQuestionsPage() {
                 </thead>
                 <tbody>
                   {questions.map((q) => {
-                    // 状態の表示
                     let statusLabel = q.status;
                     let statusClass = '';
                     if (q.status === 'pending') {
@@ -162,7 +193,6 @@ export default function MyQuestionsPage() {
                       statusClass = 'text-red-700 font-bold';
                     }
 
-                    // 問題文
                     const fullText = q.question_text || q.question || '';
                     const shortQuestion =
                       fullText.length > 30
