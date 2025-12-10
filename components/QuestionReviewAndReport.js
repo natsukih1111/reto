@@ -101,17 +101,17 @@ export default function QuestionReviewAndReport({
 
       {/* 問題一覧 */}
       <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
-        {questions.map((q) => (
-          <button
-            key={q.question_id}
-            type="button"
-            onClick={() => setSelectedQuestionId(q.question_id)}
-            className={`w-full rounded-lg border px-2 py-2 text-left text-xs ${
-              selectedQuestionId === q.question_id
-                ? 'border-sky-400 bg-sky-50'
-                : 'border-slate-200 bg-slate-50'
-            }`}
-          >
+        {questions.map((q, idx) => (
+           <button
+            key={`${q.question_id ?? 'noid'}-${idx}`}
+             type="button"
+             onClick={() => setSelectedQuestionId(q.question_id)}
+             className={`w-full rounded-lg border px-2 py-2 text-left text-xs ${
+               selectedQuestionId === q.question_id
+                 ? 'border-sky-400 bg-sky-50'
+                 : 'border-slate-200 bg-slate-50'
+             }`}
+           >
             <div className="mb-0.5 text-[10px] text-slate-500">
               問題ID: {q.question_id}
             </div>

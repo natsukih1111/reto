@@ -1,4 +1,4 @@
-// app/submit/page.js
+// file: app/submit/page.js
 'use client';
 
 import { useState } from 'react';
@@ -68,6 +68,20 @@ export default function SubmitPage() {
   const [confirmMode, setConfirmMode] = useState(false); // 類似あり→確認中
   const [checkingDup, setCheckingDup] = useState(false);
 
+  // ★「前の条件を引き継ぐ」設定
+  const [carryOpen, setCarryOpen] = useState(false);
+  const [carryConfig, setCarryConfig] = useState({
+    keepQuestion: false,       // 問題文
+    keepQuestionType: false,   // 問題タイプ
+    keepChoices: false,        // 選択肢（単一/複数/並び替え）
+    keepAnswer: false,         // 解答欄（記述の答え・別解）
+    keepTags: false,           // タグ
+  });
+
+  const toggleCarry = (key) => {
+    setCarryConfig((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const toggleTag = (tag) => {
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
@@ -95,16 +109,43 @@ export default function SubmitPage() {
     });
   };
 
+  // ★ 投稿完了後のリセット（引き継ぎ設定を反映）
   const resetForm = () => {
-    setQuestion('');
-    setTextAnswer('');
-    setAltTextAnswers(['']);
-    setCorrectChoices(['']);
-    setWrongChoices(['']);
-    setOrderChoices(['']);
-    setSelectedTags([]);
     setDuplicates([]);
     setConfirmMode(false);
+
+    setQuestion((prev) => (carryConfig.keepQuestion ? prev : ''));
+    setQuestionType((prev) => (carryConfig.keepQuestionType ? prev : 'single'));
+
+    // 記述の解答
+    setTextAnswer((prev) => (carryConfig.keepAnswer ? prev : ''));
+    setAltTextAnswers((prev) =>
+      carryConfig.keepAnswer
+        ? (prev.length ? [...prev] : [''])
+        : ['']
+    );
+
+    // 選択肢系（単一/複数/並び替え）
+    setCorrectChoices((prev) =>
+      carryConfig.keepChoices
+        ? (prev.length ? [...prev] : [''])
+        : ['']
+    );
+    setWrongChoices((prev) =>
+      carryConfig.keepChoices
+        ? (prev.length ? [...prev] : [''])
+        : ['']
+    );
+    setOrderChoices((prev) =>
+      carryConfig.keepChoices
+        ? (prev.length ? [...prev] : [''])
+        : ['']
+    );
+
+    // タグ
+    setSelectedTags((prev) =>
+      carryConfig.keepTags ? [...prev] : []
+    );
   };
 
   // 類似問題チェックだけを行う
@@ -261,7 +302,7 @@ export default function SubmitPage() {
       }
 
       setMessage('問題を送信しました。承認されると本番に反映されます。');
-      resetForm();
+      resetForm(); // ★ここで引き継ぎ設定を反映したリセット
     } catch (err) {
       console.error(err);
       setMessage('送信中にエラーが発生しました。');
@@ -273,16 +314,84 @@ export default function SubmitPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 px-4 py-6">
       <div className="max-w-xl mx-auto space-y-4">
-        {/* ヘッダー：タイトル + ホームへ */}
+        {/* ヘッダー：タイトル + ボタン群 */}
         <header className="flex items-center justify-between mb-2">
           <h1 className="text-xl font-bold">問題を投稿する</h1>
-          <Link
-            href="/"
-            className="border border-sky-400 px-3 py-1 rounded-full text-xs font-bold text-sky-200 bg-slate-900"
-          >
-            ホームへ
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCarryOpen((v) => !v)}
+              className="border border-sky-400 px-3 py-1 rounded-full text-xs font-bold bg-slate-900 text-sky-100 shadow-sm"
+            >
+              前の条件を引き継ぐ
+            </button>
+            <Link
+              href="/"
+              className="border border-sky-400 px-3 py-1 rounded-full text-xs font-bold text-sky-200 bg-slate-900"
+            >
+              ホームへ
+            </Link>
+          </div>
         </header>
+
+        {/* ★ 引き継ぎ設定パネル */}
+        {carryOpen && (
+          <div className="mb-2 text-xs bg-slate-900 border border-sky-500 rounded-2xl px-3 py-2 space-y-2">
+            <div className="font-semibold text-sky-200">
+              投稿後に引き継ぐ項目
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-sky-400"
+                  checked={carryConfig.keepQuestion}
+                  onChange={() => toggleCarry('keepQuestion')}
+                />
+                <span>問題文</span>
+              </label>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-sky-400"
+                  checked={carryConfig.keepQuestionType}
+                  onChange={() => toggleCarry('keepQuestionType')}
+                />
+                <span>問題タイプ</span>
+              </label>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-sky-400"
+                  checked={carryConfig.keepChoices}
+                  onChange={() => toggleCarry('keepChoices')}
+                />
+                <span>選択肢</span>
+              </label>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-sky-400"
+                  checked={carryConfig.keepAnswer}
+                  onChange={() => toggleCarry('keepAnswer')}
+                />
+                <span>解答欄</span>
+              </label>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="accent-sky-400"
+                  checked={carryConfig.keepTags}
+                  onChange={() => toggleCarry('keepTags')}
+                />
+                <span>タグ</span>
+              </label>
+            </div>
+            <p className="text-[10px] text-slate-400">
+              ※チェックされた項目だけ次の問題に残ります。それ以外は投稿後に空になります。
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* 種別 */}
@@ -487,8 +596,8 @@ export default function SubmitPage() {
                   type="button"
                   className={`px-2 py-1 rounded-full border text-xs ${
                     selectedTags.includes(tag)
-                      ? 'bg-sky-600 border-sky-400'
-                      : 'bg-slate-900 border-slate-600'
+                      ? 'bg-sky-600 border-sky-400 text-slate-50'
+                      : 'bg-slate-900 border-slate-600 text-slate-100'
                   }`}
                   onClick={() => toggleTag(tag)}
                 >
@@ -503,8 +612,8 @@ export default function SubmitPage() {
                   type="button"
                   className={`px-2 py-1 rounded-full border text-xs ${
                     selectedTags.includes(tag)
-                      ? 'bg-sky-600 border-sky-400'
-                      : 'bg-slate-900 border-slate-600'
+                      ? 'bg-sky-600 border-sky-400 text-slate-50'
+                      : 'bg-slate-900 border-slate-600 text-slate-100'
                   }`}
                   onClick={() => toggleTag(tag)}
                 >
