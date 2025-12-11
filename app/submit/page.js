@@ -68,14 +68,14 @@ export default function SubmitPage() {
   const [confirmMode, setConfirmMode] = useState(false); // 類似あり→確認中
   const [checkingDup, setCheckingDup] = useState(false);
 
-  // ★「前の条件を引き継ぐ」設定
+  // 「前の条件を引き継ぐ」設定
   const [carryOpen, setCarryOpen] = useState(false);
   const [carryConfig, setCarryConfig] = useState({
-    keepQuestion: false,       // 問題文
-    keepQuestionType: false,   // 問題タイプ
-    keepChoices: false,        // 選択肢（単一/複数/並び替え）
-    keepAnswer: false,         // 解答欄（記述の答え・別解）
-    keepTags: false,           // タグ
+    keepQuestion: false,        // 問題文
+    keepQuestionType: false,    // 問題タイプ
+    keepAnswerContent: false,   // 解答内容（枠 + 中身を全部残す）
+    keepAnswerBoxes: false,     // 解答欄（枠の数だけ残し、中身は空にする）
+    keepTags: false,            // タグ
   });
 
   const toggleCarry = (key) => {
@@ -109,43 +109,56 @@ export default function SubmitPage() {
     });
   };
 
-  // ★ 投稿完了後のリセット（引き継ぎ設定を反映）
+  // 投稿完了後のリセット（引き継ぎ設定を反映）
   const resetForm = () => {
     setDuplicates([]);
     setConfirmMode(false);
 
-    setQuestion((prev) => (carryConfig.keepQuestion ? prev : ''));
-    setQuestionType((prev) => (carryConfig.keepQuestionType ? prev : 'single'));
+    // ★ 今の枠数を先にメモしておく（特に並び替えで重要）
+    const altLen = altTextAnswers.length || 1;
+    const correctLen = correctChoices.length || 1;
+    const wrongLen = wrongChoices.length || 1;
+    const orderLen = orderChoices.length || 1;
 
-    // 記述の解答
-    setTextAnswer((prev) => (carryConfig.keepAnswer ? prev : ''));
-    setAltTextAnswers((prev) =>
-      carryConfig.keepAnswer
-        ? (prev.length ? [...prev] : [''])
-        : ['']
-    );
+    // 問題文
+    if (!carryConfig.keepQuestion) {
+      setQuestion('');
+    }
 
-    // 選択肢系（単一/複数/並び替え）
-    setCorrectChoices((prev) =>
-      carryConfig.keepChoices
-        ? (prev.length ? [...prev] : [''])
-        : ['']
-    );
-    setWrongChoices((prev) =>
-      carryConfig.keepChoices
-        ? (prev.length ? [...prev] : [''])
-        : ['']
-    );
-    setOrderChoices((prev) =>
-      carryConfig.keepChoices
-        ? (prev.length ? [...prev] : [''])
-        : ['']
-    );
+    // 問題タイプ
+    if (!carryConfig.keepQuestionType) {
+      setQuestionType('single');
+    }
+
+    // 解答内容・解答欄
+    if (carryConfig.keepAnswerContent) {
+      // 何もしない → 枠の数も中身も全部残す
+    } else if (carryConfig.keepAnswerBoxes) {
+      // 枠の数だけ残して、中身は空にする
+
+      // 記述
+      setTextAnswer('');
+      setAltTextAnswers(Array(altLen).fill(''));
+
+      // 単一/複数
+      setCorrectChoices(Array(correctLen).fill(''));
+      setWrongChoices(Array(wrongLen).fill(''));
+
+      // 並び替え
+      setOrderChoices(Array(orderLen).fill(''));
+    } else {
+      // 解答欄ごとリセット（枠1つだけ）
+      setTextAnswer('');
+      setAltTextAnswers(['']);
+      setCorrectChoices(['']);
+      setWrongChoices(['']);
+      setOrderChoices(['']);
+    }
 
     // タグ
-    setSelectedTags((prev) =>
-      carryConfig.keepTags ? [...prev] : []
-    );
+    if (!carryConfig.keepTags) {
+      setSelectedTags([]);
+    }
   };
 
   // 類似問題チェックだけを行う
@@ -237,12 +250,10 @@ export default function SubmitPage() {
       const correct = cleanArray(correctChoices);
       const wrong = cleanArray(wrongChoices);
 
-      // ★ここを変更：正解は1つ以上 / 不正解0個でもOK
       if (correct.length < 1) {
         setMessage('複数選択は「解答」を1つ以上入力してください。');
         return;
       }
-      // 不正解はチェックしない（0個でもOK）
 
       options = [...correct, ...wrong];
       answer = JSON.stringify(correct); // 正解配列を文字列で保存
@@ -334,7 +345,7 @@ export default function SubmitPage() {
           </div>
         </header>
 
-        {/* ★ 引き継ぎ設定パネル */}
+        {/* 引き継ぎ設定パネル */}
         {carryOpen && (
           <div className="mb-2 text-xs bg-slate-900 border border-sky-500 rounded-2xl px-3 py-2 space-y-2">
             <div className="font-semibold text-sky-200">
@@ -363,17 +374,17 @@ export default function SubmitPage() {
                 <input
                   type="checkbox"
                   className="accent-sky-400"
-                  checked={carryConfig.keepChoices}
-                  onChange={() => toggleCarry('keepChoices')}
+                  checked={carryConfig.keepAnswerContent}
+                  onChange={() => toggleCarry('keepAnswerContent')}
                 />
-                <span>選択肢</span>
+                <span>解答内容</span>
               </label>
               <label className="inline-flex items-center gap-1 cursor-pointer">
                 <input
                   type="checkbox"
                   className="accent-sky-400"
-                  checked={carryConfig.keepAnswer}
-                  onChange={() => toggleCarry('keepAnswer')}
+                  checked={carryConfig.keepAnswerBoxes}
+                  onChange={() => toggleCarry('keepAnswerBoxes')}
                 />
                 <span>解答欄</span>
               </label>
@@ -387,8 +398,12 @@ export default function SubmitPage() {
                 <span>タグ</span>
               </label>
             </div>
-            <p className="text-[10px] text-slate-400">
-              ※チェックされた項目だけ次の問題に残ります。それ以外は投稿後に空になります。
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              ・<span className="font-semibold text-sky-200">解答内容</span>：
+              記述／単一／複数／並び替えの「回答欄の枠の数」と「入力した内容」が
+              そのまま残ります。{'\n'}
+              ・<span className="font-semibold text-sky-200">解答欄</span>：
+              「枠の数」だけ残し、中身は空にリセットされます。
             </p>
           </div>
         )}
