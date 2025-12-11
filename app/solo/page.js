@@ -176,7 +176,7 @@ export default function SoloMenuPage() {
               className="block hover:bg-amber-100 rounded-2xl -mx-3 -my-3 px-3 py-3 transition"
             >
               <p className="text-sm font-bold text-amber-900">
-                ダンジョン（ソロ）
+                ダンジョン（複数回答）
               </p>
               <p className="text-[11px] text-amber-950 leading-tight mt-1">
                 モンスターの弱点だけを選んで魔法攻撃する複数選択専用モード。
