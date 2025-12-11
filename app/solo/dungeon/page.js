@@ -721,6 +721,7 @@ export default function DungeonPage() {
     <div className={`dungeon-magic-burst ${magicType}`} />
   </div>
 ))}
+
               </>
             )}
           </div>
@@ -1095,6 +1096,7 @@ export default function DungeonPage() {
             drop-shadow(0 0 28px rgba(255, 255, 255, 0.9));
         }
 
+
         /* ===== モンスター撃破：爆発して落下 ===== */
         @keyframes dungeon-monster-death-anim {
           0% {
@@ -1169,7 +1171,6 @@ export default function DungeonPage() {
         .dungeon-player-damage {
           animation: dungeon-player-damage-anim 0.35s ease-out;
         }
-
 /* ===== 魔方陣に向かって飛ぶ魔法弾（projectile） ===== */
 @keyframes dungeon-projectile-anim {
   0% {
