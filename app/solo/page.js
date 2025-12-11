@@ -8,7 +8,6 @@ export default function SoloMenuPage() {
   const [meteorBest, setMeteorBest] = useState(0);
   const [sniperBest, setSniperBest] = useState(0);
   const [dungeonBest, setDungeonBest] = useState(null);
-  const [bombBest, setBombBest] = useState(0); // ★ 爆弾解除の自己ベスト
 
   const [me, setMe] = useState(null);
 
@@ -58,13 +57,6 @@ export default function SoloMenuPage() {
         setDungeonBest(d);
       } else {
         setDungeonBest(null);
-      }
-
-      // ★ 爆弾解除（並び替え）
-      const rawBomb = window.localStorage.getItem('bomb_best_score');
-      const b = rawBomb ? Number(rawBomb) : 0;
-      if (!Number.isNaN(b) && b > 0) {
-        setBombBest(b);
       }
     } catch {
       // 無視
@@ -169,14 +161,14 @@ export default function SoloMenuPage() {
             </div>
           </div>
 
-          {/* ダンジョン（ソロ） */}
+          {/* ダンジョン（複数回答） */}
           <div className="rounded-2xl border border-amber-400 bg-amber-50 px-3 py-3 shadow-sm">
             <Link
               href="/solo/dungeon"
               className="block hover:bg-amber-100 rounded-2xl -mx-3 -my-3 px-3 py-3 transition"
             >
               <p className="text-sm font-bold text-amber-900">
-                ダンジョン（ソロ）
+                ダンジョン（複数回答）
               </p>
               <p className="text-[11px] text-amber-950 leading-tight mt-1">
                 モンスターの弱点だけを選んで魔法攻撃する複数選択専用モード。
@@ -195,35 +187,6 @@ export default function SoloMenuPage() {
               <Link
                 href="/solo/dungeon/rules"
                 className="underline text-amber-700 hover:text-amber-500"
-              >
-                ルールを見る
-              </Link>
-            </div>
-          </div>
-
-          {/* ★ 爆弾解除（並び替え） */}
-          <div className="rounded-2xl border border-fuchsia-400 bg-fuchsia-50 px-3 py-3 shadow-sm">
-            <Link
-              href="/solo/bomb"
-              className="block hover:bg-fuchsia-100 rounded-2xl -mx-3 -my-3 px-3 py-3 transition"
-            >
-              <p className="text-sm font-bold text-fuchsia-900">
-                爆弾解除（並び替え）
-              </p>
-              <p className="text-[11px] text-fuchsia-950 leading-tight mt-1">
-                並び替え問題だけを使った爆弾解除モード。
-                正しい順にコードを切って、できるだけ多くの爆弾を解除しよう。
-              </p>
-            </Link>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-fuchsia-900">
-              <span>
-                自己ベスト:{' '}
-                <span className="font-semibold">{bombBest}</span>
-                個
-              </span>
-              <Link
-                href="/solo/bomb/rules"
-                className="underline text-fuchsia-700 hover:text-fuchsia-500"
               >
                 ルールを見る
               </Link>

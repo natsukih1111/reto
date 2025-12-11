@@ -9,8 +9,8 @@ export default function DungeonRulesPage() {
       <header className="w-full border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="mx-auto max-w-3xl px-4 py-3 flex items-center justify-between">
           <h1 className="text-base sm:text-lg font-semibold">ダンジョン（ソロ）ルール</h1>
-          <Link href="/solo" className="text-teal-300 hover:text-teal-200 underline text-xs sm:text-sm">
-            ソロゲームに戻る
+          <Link href="/solo/dungeon" className="text-teal-300 hover:text-teal-200 underline text-xs sm:text-sm">
+            ダンジョンへ戻る
           </Link>
         </div>
       </header>
@@ -20,8 +20,7 @@ export default function DungeonRulesPage() {
           <h2 className="text-lg font-semibold mb-2 text-slate-50">基本ルール</h2>
           <ul className="list-disc pl-5 space-y-1 text-slate-100">
             <li>複数選択クイズだけを使うソロモードです。</li>
-            <li>完全回答のみが正解となり、モンスターに攻撃します。</li>
-            <li>選択肢をタップすると選択肢が選択され、再度タップで取り消せます。</li>
+            <li>画面中央のモンスターに、正しい選択肢を選んで攻撃します。</li>
             <li>「攻撃する（🪄）」ボタンを押すと、選択結果が確定します。</li>
           </ul>
         </section>
@@ -46,21 +45,21 @@ export default function DungeonRulesPage() {
         </section>
 
         <section className="rounded-xl bg-slate-800/80 border border-slate-700 px-4 py-4 sm:px-5 sm:py-5">
-          <h2 className="text-lg font-semibold mb-2 text-slate-50">HP仕様</h2>
+          <h2 className="text-lg font-semibold mb-2 text-slate-50">モンスターの撃破</h2>
           <ul className="list-disc pl-5 space-y-1 text-slate-100">
-            <li>HPは500でモンスターは10問正解すると倒せます。</li>
-            <li>モンスターを倒すとHPが100回復します。</li>
-            <li>HPが0になるまで無限に続きます。</li>
+            <li>10問正解するとモンスターを撃破でき、HPが100回復して次のモンスターが出てきます。</li>
+            <li>どのモンスターも10問正解で撃破できます。</li>
+            <li>HPが0になるまでエンドレスで続きます。</li>
           </ul>
         </section>
 
         <div className="pt-2">
           <Link
-            href="/solo"
+            href="/"
             className="inline-flex items-center justify-center rounded-full px-4 py-2 text-sm sm:text-base
               bg-slate-100 text-slate-900 font-semibold shadow hover:bg-white"
           >
-            ソロゲームに戻る
+            ホームへ戻る
           </Link>
         </div>
       </main>

@@ -1,141 +1,189 @@
 // file: app/api/solo/titles/route.js
-import db from '@/lib/db.js';
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import db from '@/lib/db.js';
 
-// ログイン中ユーザー取得（nb_username クッキー → users.id）
-async function getCurrentUserId() {
-  const cookieStore = await cookies();
-  const username = cookieStore.get('nb_username')?.value;
-  if (!username) return null;
+// ユーザーに称号を付与する共通関数
+async function grantTitleByCode(userId, code) {
+  if (!userId || !code) return false;
 
-  const row = await db.get(
-    'SELECT id FROM users WHERE username = $1',
-    [username]
+  // titles.id を取得
+  const row = await db.get('SELECT id FROM titles WHERE code = $1', [code]);
+  if (!row) return false;
+
+  const titleId = row.id;
+
+  // 既に持っていないか確認
+  const owned = await db.get(
+    'SELECT id FROM user_titles WHERE user_id = $1 AND title_id = $2',
+    [userId, titleId]
   );
-  return row?.id ?? null;
-}
+  if (owned) return false;
 
-// 指定 name の称号を 1 つ付与（すでに持っていれば何もしない）
-async function ensureUserTitleByName(userId, titleName) {
-  if (!userId || !titleName) return;
-
-  const title = await db.get(
-    'SELECT id FROM titles WHERE name = $1',
-    [titleName]
-  );
-  if (!title) {
-    console.warn('[solo/titles] title not found:', titleName);
-    return;
-  }
-
-  const exists = await db.get(
-    'SELECT 1 FROM user_titles WHERE user_id = $1 AND title_id = $2',
-    [userId, title.id]
-  );
-  if (exists) return;
-
+  // 付与
   await db.run(
-    'INSERT INTO user_titles (user_id, title_id) VALUES ($1, $2)',
-    [userId, title.id]
+    `
+      INSERT INTO user_titles (user_id, title_id, acquired_at, equipped)
+      VALUES ($1, $2, NOW(), FALSE)
+    `,
+    [userId, titleId]
   );
+
+  return true;
 }
 
-// POST /api/solo/titles
-// body: { type: 'meteor' | 'sniper' | 'boss', value, difficulty?, result?, noTeam? }
+// 複数候補コードのうち、存在するものだけ付与
+async function grantMany(userId, codes, granted) {
+  for (const code of codes) {
+    if (!code) continue;
+    if (await grantTitleByCode(userId, code)) {
+      granted.push(code);
+    }
+  }
+}
+
 export async function POST(request) {
   try {
-    const userId = await getCurrentUserId();
-    if (!userId) {
-      return NextResponse.json(
-        { ok: false, message: 'not_logged_in' },
-        { status: 401 }
-      );
-    }
-
     const body = await request.json().catch(() => ({}));
-    const { type, value, difficulty, result, noTeam } = body;
+    console.log('[solo/titles] body =', body);
 
-    if (!type) {
+    const { type } = body;
+
+    const rawUserId = body.userId ?? body.user_id;
+    const userId = rawUserId ? Number(rawUserId) : NaN;
+
+    if (!rawUserId || Number.isNaN(userId)) {
       return NextResponse.json(
-        { ok: false, message: 'type is required' },
+        { ok: false, message: 'userId が不正です' },
         { status: 400 }
       );
     }
 
     const granted = [];
 
-    // ========= 隕石クラッシュ =========
-    if (type === 'meteor') {
-      const score = Number(value) || 0;
+    // ① ソロメニュー（隕石クラッシュ / 正答スナイパー）
+    if (type === 'solo_menu') {
+      const meteorBest = Number(body.meteorBest ?? 0);
+      const sniperBest = Number(body.sniperBest ?? 0);
 
-      if (score >= 50) {
-        await ensureUserTitleByName(userId, '隕石ルーキー');
-        granted.push('隕石ルーキー');
+      // ★ 隕石クラッシュ
+      if (meteorBest >= 50) {
+        await grantMany(userId, ['solo_meteor_50'], granted);
       }
-      if (score >= 75) {
-        await ensureUserTitleByName(userId, '隕石マニア');
-        granted.push('隕石マニア');
+      if (meteorBest >= 75) {
+        await grantMany(userId, ['solo_meteor_75'], granted);
       }
-      if (score >= 100) {
-        await ensureUserTitleByName(userId, '隕石王');
-        granted.push('隕石王');
+      if (meteorBest >= 100) {
+        // 旧コード meteor_100 も一応見ておく
+        await grantMany(userId, ['solo_meteor_100', 'meteor_100'], granted);
+      }
+
+      // ★ 正答スナイパー
+      if (sniperBest >= 50) {
+        await grantMany(
+          userId,
+          ['solo_sniper_50', 'sniper_50'],
+          granted
+        );
+      }
+      if (sniperBest >= 75) {
+        await grantMany(
+          userId,
+          ['solo_sniper_75', 'sniper_75'],
+          granted
+        );
+      }
+      if (sniperBest >= 100) {
+        await grantMany(
+          userId,
+          ['solo_sniper_100', 'sniper_100'],
+          granted
+        );
       }
     }
 
-    // ========= 正答スナイパー =========
-    if (type === 'sniper') {
-      const score = Number(value) || 0;
+    // ② ボス討伐（タイムアタック系）
+    else if (type === 'boss') {
+      const difficulty = String(body.difficulty ?? '');
+      const result = String(body.result ?? '');
+      const clearMs = Number(body.value ?? body.clearMs ?? 0);
+      const noTeam = !!body.noTeam;
 
-      if (score >= 50) {
-        await ensureUserTitleByName(userId, '駆け出し狙撃手');
-        granted.push('駆け出し狙撃手');
+      if (result === 'win' && clearMs > 0 && difficulty) {
+        const clearSec = clearMs / 1000;
+
+        if (difficulty === 'easy' && clearSec <= 60) {
+          await grantMany(userId, ['boss_easy_60'], granted);
+        }
+        if (difficulty === 'normal' && clearSec <= 100) {
+          await grantMany(userId, ['boss_normal_100'], granted);
+        }
+        if (difficulty === 'hard' && clearSec <= 150) {
+          await grantMany(userId, ['boss_hard_150'], granted);
+        }
+        if (difficulty === 'veryhard' && clearSec <= 180) {
+          await grantMany(userId, ['boss_vh_180'], granted);
+        }
+
+        // ★ エクストラ 300 秒以内
+        if (difficulty === 'extra' && clearSec <= 300) {
+          await grantMany(userId, ['boss_extra_300'], granted);
+        }
       }
-      if (score >= 75) {
-        await ensureUserTitleByName(userId, '名狙撃手');
-        granted.push('名狙撃手');
-      }
-      if (score >= 100) {
-        await ensureUserTitleByName(userId, '狙撃の王');
-        granted.push('狙撃の王');
+
+      // ★ エクストラをマイチーム全部空でクリア（タイム条件なし）
+      if (result === 'win' && difficulty === 'extra' && noTeam) {
+        await grantMany(userId, ['boss_extra_noteam'], granted);
       }
     }
 
-    // ========= ボス討伐 =========
-    if (type === 'boss') {
-      // value は クリアタイム ms を想定
-      const clearMs = Number(value) || 0;
-      const clearSec = clearMs > 0 ? clearMs / 1000 : null;
+    // ③ マイページから：所持キャラ数 & チャレンジモード
+    else if (type === 'mypage') {
+      const ownedCharacters = Number(
+        body.ownedCharacters ?? body.charsOwned ?? 0
+      );
 
-      // 勝利以外は称号なし
-      if (result === 'win') {
-        // 難易度ごとのタイム条件
-        if (difficulty === 'easy' && clearSec != null && clearSec <= 60) {
-          await ensureUserTitleByName(userId, 'イージーエンブレム');
-          granted.push('イージーエンブレム');
-        }
-        if (difficulty === 'normal' && clearSec != null && clearSec <= 100) {
-          await ensureUserTitleByName(userId, 'ノーマルエンブレム');
-          granted.push('ノーマルエンブレム');
-        }
-        if (difficulty === 'hard' && clearSec != null && clearSec <= 150) {
-          await ensureUserTitleByName(userId, 'ハードエンブレム');
-          granted.push('ハードエンブレム');
-        }
-        if (difficulty === 'veryhard' && clearSec != null && clearSec <= 180) {
-          await ensureUserTitleByName(userId, 'ベリーハードエンブレム');
-          granted.push('ベリーハードエンブレム');
-        }
-        if (difficulty === 'extra' && clearSec != null && clearSec <= 300) {
-          await ensureUserTitleByName(userId, 'エクストラエンブレム');
-          granted.push('エクストラエンブレム');
-        }
+      // チャレンジの「シーズン最高」と「歴代最高」どちらも見て最大値を使う
+      const seasonBest = Number(body.challengeSeasonBest ?? 0);
+      const allTimeBest = Number(
+        body.challengeAllTimeBest ??
+          body.challengeBest ??
+          body.allTimeBest ??
+          0
+      );
+      const challengeBest = Math.max(seasonBest, allTimeBest);
 
-        // エクストラをチーム編成なしでクリア → 修行者
-        if (difficulty === 'extra' && noTeam === true) {
-          await ensureUserTitleByName(userId, '修行者');
-          granted.push('修行者');
-        }
+      // ★ キャラ所持数（図鑑：100 / 300 / 500）
+      if (ownedCharacters >= 100) {
+        await grantMany(userId, ['zukan_100', 'chars_100'], granted);
+      }
+      if (ownedCharacters >= 300) {
+        await grantMany(userId, ['zukan_300', 'chars_300'], granted);
+      }
+      if (ownedCharacters >= 500) {
+        await grantMany(userId, ['zukan_500', 'chars_500'], granted);
+      }
+
+      // ★ チャレンジ（歴代最高 10 / 30 / 50）
+      if (challengeBest >= 10) {
+        await grantMany(
+          userId,
+          ['challenge_10', 'challenge_all_10'],
+          granted
+        );
+      }
+      if (challengeBest >= 30) {
+        await grantMany(
+          userId,
+          ['challenge_30', 'challenge_all_30'],
+          granted
+        );
+      }
+      if (challengeBest >= 50) {
+        await grantMany(
+          userId,
+          ['challenge_50', 'challenge_all_50'],
+          granted
+        );
       }
     }
 
@@ -143,7 +191,7 @@ export async function POST(request) {
   } catch (e) {
     console.error('[api/solo/titles] error', e);
     return NextResponse.json(
-      { ok: false, message: 'server_error' },
+      { ok: false, message: 'サーバーエラーが発生しました' },
       { status: 500 }
     );
   }
