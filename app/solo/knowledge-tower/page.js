@@ -97,7 +97,6 @@ function defaultBossLayout(floor) {
   return { x: 0, y: 0, wPct: 78, scale: 1, rotate: 0 };
 }
 
-
 /* =========================
    ユーティリティ
 ========================= */
@@ -491,14 +490,13 @@ export default function KnowledgeTowerPage() {
   const bossImage = useMemo(() => `/tower/boss${selectedFloor}.png`, [selectedFloor]);
   const towerImage = useMemo(() => getTowerImageByFloor(selectedFloor), [selectedFloor]);
 
-const [bossLayout, setBossLayout] = useState(defaultBossLayout(1));
+  const [bossLayout, setBossLayout] = useState(defaultBossLayout(1));
 
-useEffect(() => {
-  if (typeof window === 'undefined') return;
-  const saved = loadBossLayoutForFloor(selectedFloor);
-  setBossLayout(saved || defaultBossLayout(selectedFloor));
-}, [selectedFloor]);
-
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = loadBossLayoutForFloor(selectedFloor);
+    setBossLayout(saved || defaultBossLayout(selectedFloor));
+  }, [selectedFloor]);
 
   const questionSeconds = Math.max(0, Math.floor(questionLeftMs / 1000));
   const bossSeconds = Math.max(0, Math.floor(bossLeftMs / 1000));
@@ -1031,7 +1029,18 @@ useEffect(() => {
 
   if (initLoading) {
     return (
-      <main className="min-h-screen bg-sky-50 text-sky-900 flex items-center justify-center">
+      <main className="tower-nozoom min-h-screen bg-sky-50 text-sky-900 flex items-center justify-center">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <p className="text-sm font-bold">ナレッジタワーを読み込み中...</p>
       </main>
     );
@@ -1039,7 +1048,18 @@ useEffect(() => {
 
   if (initError) {
     return (
-      <main className="min-h-screen bg-sky-50 text-sky-900 flex items-center justify-center px-4">
+      <main className="tower-nozoom min-h-screen bg-sky-50 text-sky-900 flex items-center justify-center px-4">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow p-6 text-center space-y-3">
           <h1 className="text-lg font-extrabold">ナレッジタワー</h1>
           <p className="text-sm text-rose-700 whitespace-pre-wrap">{initError}</p>
@@ -1073,7 +1093,18 @@ useEffect(() => {
     const thisLoopClearedAll = clearedThisLoop >= 20;
 
     return (
-      <main className="min-h-screen text-slate-900 relative overflow-hidden">
+      <main className="tower-nozoom min-h-screen text-slate-900 relative overflow-hidden">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <div className="absolute inset-0 bg-gradient-to-b from-sky-200 via-sky-100 to-white" />
         <div className="absolute -top-20 -left-20 w-72 h-40 bg-white/60 blur-2xl rounded-full" />
         <div className="absolute top-24 -right-24 w-96 h-56 bg-white/60 blur-2xl rounded-full" />
@@ -1274,7 +1305,18 @@ useEffect(() => {
 
   if (phase === 'floor') {
     return (
-      <main className="min-h-screen text-white relative overflow-hidden">
+      <main className="tower-nozoom min-h-screen text-white relative overflow-hidden">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url('/tower/rasen.png')" }} />
         <div className="absolute inset-0 bg-black/55" />
 
@@ -1449,7 +1491,18 @@ useEffect(() => {
     const bossBarRatio = bossTotalMs > 0 ? Math.max(0, Math.min(1, bossLeftMs / bossTotalMs)) : 0;
 
     return (
-      <main className="min-h-screen text-white relative overflow-hidden">
+      <main className="tower-nozoom min-h-screen text-white relative overflow-hidden">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-950 to-black" />
 
         <div className="absolute top-0 left-0 right-0 h-3 bg-black/40 border-b border-white/10">
@@ -1518,19 +1571,16 @@ useEffect(() => {
                 <img src="/tower/boss0.png" alt="boss-bg" className="w-full h-[260px] sm:h-[320px] object-cover opacity-90" />
 
                 <div className="absolute inset-0 flex items-center justify-center">
-<img
-  src={bossImage}
-  alt={`boss-${selectedFloor}`}
-  style={{
-    width: `${bossLayout?.wPct ?? 78}%`,
-    transform: `translate(${bossLayout?.x ?? 0}px, ${bossLayout?.y ?? 0}px) scale(${bossLayout?.scale ?? 1}) rotate(${bossLayout?.rotate ?? 0}deg)`,
-    transformOrigin: 'center center',
-  }}
-  className={
-    'max-h-[90%] object-contain ' + (bossExplode ? 'bossExplode' : '')
-  }
-/>
-
+                  <img
+                    src={bossImage}
+                    alt={`boss-${selectedFloor}`}
+                    style={{
+                      width: `${bossLayout?.wPct ?? 78}%`,
+                      transform: `translate(${bossLayout?.x ?? 0}px, ${bossLayout?.y ?? 0}px) scale(${bossLayout?.scale ?? 1}) rotate(${bossLayout?.rotate ?? 0}deg)`,
+                      transformOrigin: 'center center',
+                    }}
+                    className={'max-h-[90%] object-contain ' + (bossExplode ? 'bossExplode' : '')}
+                  />
                 </div>
 
                 <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/60 text-white text-xs font-extrabold">
@@ -1887,7 +1937,18 @@ useEffect(() => {
 
   if (phase === 'floor_result') {
     return (
-      <main className="min-h-screen bg-slate-950 text-white px-4 py-6">
+      <main className="tower-nozoom min-h-screen bg-slate-950 text-white px-4 py-6">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <div className="max-w-5xl mx-auto space-y-4">
           <header className="flex items-start justify-between">
             <div>
@@ -1915,7 +1976,9 @@ useEffect(() => {
               {floorHistory.map((h, idx) => (
                 <div key={h.question?._towerKey ?? idx} className="rounded-2xl border border-white/10 bg-black/25 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold">{idx + 1}. {h.isCorrect ? '✅ 正解' : '❌ 不正解'}</span>
+                    <span className="text-xs font-extrabold">
+                      {idx + 1}. {h.isCorrect ? '✅ 正解' : '❌ 不正解'}
+                    </span>
                     <span className="text-xs text-white/70">{h.question?.type ?? ''}</span>
                   </div>
                   <p className="mt-2 text-sm font-bold">{h.question?.question ?? h.question?.text}</p>
@@ -1950,7 +2013,18 @@ useEffect(() => {
 
   if (phase === 'boss_result') {
     return (
-      <main className="min-h-screen bg-slate-950 text-white px-4 py-6">
+      <main className="tower-nozoom min-h-screen bg-slate-950 text-white px-4 py-6">
+        {/* ★ iOS入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+        <style jsx global>{`
+          @media (max-width: 640px) {
+            .tower-nozoom input,
+            .tower-nozoom textarea,
+            .tower-nozoom select {
+              font-size: 16px !important;
+            }
+          }
+        `}</style>
+
         <div className="max-w-5xl mx-auto space-y-4">
           <header className="flex items-start justify-between">
             <div>
@@ -1978,7 +2052,9 @@ useEffect(() => {
               {bossHistory.map((h, idx) => (
                 <div key={h.question?._towerKey ?? idx} className="rounded-2xl border border-white/10 bg-black/25 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold">{idx + 1}. {h.isCorrect ? '✅ 正解' : '❌ 不正解'}</span>
+                    <span className="text-xs font-extrabold">
+                      {idx + 1}. {h.isCorrect ? '✅ 正解' : '❌ 不正解'}
+                    </span>
                     <span className="text-xs text-white/70">{h.question?.type ?? ''}</span>
                   </div>
                   <p className="mt-2 text-sm font-bold">{h.question?.question ?? h.question?.text}</p>
