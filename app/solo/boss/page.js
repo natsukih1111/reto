@@ -1357,8 +1357,18 @@ const finishBattle = (result) => {
   // ==== プレイ画面 ====
   const diff = difficultyKey ? DIFFICULTIES[difficultyKey] : null;
 
-  return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black text-slate-50">
+return (
+  <main className="boss-nozoom min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black text-slate-50">
+    {/* ★ iOSの入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+    <style jsx global>{`
+      @media (max-width: 640px) {
+        .boss-nozoom input,
+        .boss-nozoom textarea,
+        .boss-nozoom select {
+          font-size: 16px !important;
+        }
+      }
+    `}</style>
       <div className="max-w-4xl mx-auto px-3 sm:px-4 py-3">
         <header className="flex items-center justify-between mb-3">
           <div>

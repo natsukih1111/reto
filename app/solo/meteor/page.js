@@ -184,8 +184,7 @@ export default function MeteorSoloPage() {
             // ★ タイムアップ → 被弾 & 履歴追加
             const q = questions[slot.questionIndex];
             if (q) {
-              const qid =
-                q.id ?? q.question_id ?? q.questionId ?? null;
+              const qid = q.id ?? q.question_id ?? q.questionId ?? null;
               setAnswerHistory((prev) => [
                 ...prev,
                 {
@@ -252,9 +251,7 @@ export default function MeteorSoloPage() {
 
     // 爆発フラグを立てる
     setSlots((prevSlots) =>
-      prevSlots.map((s, i) =>
-        i === slotIndex ? { ...s, exploding: true } : s
-      )
+      prevSlots.map((s, i) => (i === slotIndex ? { ...s, exploding: true } : s))
     );
 
     // 少し待ってから新しい問題に差し替え
@@ -300,8 +297,7 @@ export default function MeteorSoloPage() {
       const alts = Array.isArray(q.altAnswers) ? q.altAnswers : [];
 
       const isCorrect =
-        normalize(base) === nInput ||
-        alts.some((a) => normalize(a) === nInput);
+        normalize(base) === nInput || alts.some((a) => normalize(a) === nInput);
 
       if (isCorrect && hitIndex === -1) {
         hitIndex = idx;
@@ -345,15 +341,11 @@ export default function MeteorSoloPage() {
             <div className="space-y-1 text-sm">
               <p>
                 撃ち落とした隕石：{' '}
-                <span className="font-semibold text-amber-300">
-                  {score} 個
-                </span>
+                <span className="font-semibold text-amber-300">{score} 個</span>
               </p>
               <p>
                 被弾した回数：{' '}
-                <span className="font-semibold text-rose-300">
-                  {hits} 回
-                </span>
+                <span className="font-semibold text-rose-300">{hits} 回</span>
               </p>
               <p>
                 このブラウザでの自己ベスト：{' '}
@@ -363,9 +355,7 @@ export default function MeteorSoloPage() {
               </p>
             </div>
 
-            {message && (
-              <p className="text-xs text-slate-300 mt-2">{message}</p>
-            )}
+            {message && <p className="text-xs text-slate-300 mt-2">{message}</p>}
 
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
@@ -397,10 +387,7 @@ export default function MeteorSoloPage() {
 
           {/* ★ 問題の振り返り & 不備報告 */}
           <div className="max-w-3xl mx-auto">
-            <QuestionReviewAndReport
-              questions={answerHistory}
-              sourceMode="solo-meteor"
-            />
+            <QuestionReviewAndReport questions={answerHistory} sourceMode="solo-meteor" />
           </div>
         </div>
       </GameLayout>
@@ -423,29 +410,19 @@ export default function MeteorSoloPage() {
       <div className="w-full max-w-5xl mx-auto mt-2 mb-3 px-1 sm:px-2">
         <div className="flex items-center justify-between mb-1">
           <div className="flex flex-col">
-            <span className="text-[11px] sm:text-xs text-slate-100">
-              残り時間
-            </span>
+            <span className="text-[11px] sm:text-xs text-slate-100">残り時間</span>
             <span className="text-[11px] sm:text-xs text-slate-200">
               自己ベスト:{' '}
-              <span className="font-semibold text-emerald-300">
-                {bestScore}
-              </span>
+              <span className="font-semibold text-emerald-300">{bestScore}</span>
               個
             </span>
           </div>
           <div className="flex gap-3 items-center text-[11px] sm:text-xs text-slate-100">
             <span>
-              Score:{' '}
-              <span className="font-semibold text-amber-200">
-                {score}
-              </span>
+              Score: <span className="font-semibold text-amber-200">{score}</span>
             </span>
             <span>
-              Hits:{' '}
-              <span className="font-semibold text-rose-200">
-                {hits}
-              </span>
+              Hits: <span className="font-semibold text-rose-200">{hits}</span>
             </span>
             <Link
               href="/solo/meteor/rules"
@@ -485,10 +462,7 @@ export default function MeteorSoloPage() {
             };
 
             return (
-              <div
-                key={i}
-                className="relative flex-1 flex justify-center"
-              >
+              <div key={i} className="relative flex-1 flex justify-center">
                 <div
                   className="absolute w-[88%] sm:w-4/5 max-w-md transition-transform duration-200"
                   style={{
@@ -641,7 +615,18 @@ export default function MeteorSoloPage() {
 
 function GameLayout({ children }) {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black text-slate-50 relative overflow-hidden">
+    <main className="meteor-nozoom min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-black text-slate-50 relative overflow-hidden">
+      {/* ★ iOSの入力ズーム防止（このページ限定 / スマホ幅のみ） */}
+      <style jsx global>{`
+        @media (max-width: 640px) {
+          .meteor-nozoom input,
+          .meteor-nozoom textarea,
+          .meteor-nozoom select {
+            font-size: 16px !important;
+          }
+        }
+      `}</style>
+
       {/* 星っぽい背景 */}
       <div className="pointer-events-none absolute inset-0 opacity-70 mix-blend-screen">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.3),transparent_60%),radial-gradient(circle_at_80%_30%,rgba(129,140,248,0.4),transparent_55%),radial-gradient(circle_at_50%_80%,rgba(248,250,252,0.25),transparent_55%)]" />

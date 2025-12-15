@@ -270,6 +270,9 @@ export default function SubmitPage() {
   const [importIndex, setImportIndex] = useState(0); // 次に読み込むインデックス（1-based表示用には +1）
   const [importInfo, setImportInfo] = useState('');
 
+  // ★ 通常投稿に戻したら「投稿しても自動で次のCSV問題に進まない」ためのフラグ
+  const [importAutoFillPaused, setImportAutoFillPaused] = useState(false);
+
   const toggleCarry = (key) => {
     setCarryConfig((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -544,15 +547,17 @@ export default function SubmitPage() {
       // フォームのリセット（引き継ぎ設定を考慮）
       resetForm();
 
-      // ストックがあれば次の問題を自動でフォームに載せる
-      if (importQueue.length > 0 && importIndex < importQueue.length) {
+      // ★ 通常投稿モード中は「自動で次のCSV問題をセット」しない
+      if (
+        !importAutoFillPaused &&
+        importQueue.length > 0 &&
+        importIndex < importQueue.length
+      ) {
         const nextItem = importQueue[importIndex];
         applyImportedQuestion(nextItem);
         const nextIndex = importIndex + 1;
         setImportIndex(nextIndex);
-        setImportInfo(
-          `読み込み済み: ${nextIndex} / ${importQueue.length} 問`
-        );
+        setImportInfo(`読み込み済み: ${nextIndex} / ${importQueue.length} 問`);
       }
     } catch (err) {
       console.error(err);
@@ -582,6 +587,8 @@ export default function SubmitPage() {
   };
 
   const handleImportNext = () => {
+    setImportAutoFillPaused(false); // ★ 次に進む操作をしたら自動送り込みを復帰
+
     if (importQueue.length === 0) {
       setImportInfo(
         'ストックが空です。CSVを貼り付けて「ストックに追加」を押してください。'
@@ -596,13 +603,14 @@ export default function SubmitPage() {
     applyImportedQuestion(item);
     const nextIndex = importIndex + 1;
     setImportIndex(nextIndex);
-    setImportInfo(
-      `読み込み済み: ${nextIndex} / ${importQueue.length} 問`
-    );
+    setImportInfo(`読み込み済み: ${nextIndex} / ${importQueue.length} 問`);
   };
 
   // ★ 1つ前の問題に戻る
   const handleImportPrev = () => {
+    // （戻るのも「読み込み操作」扱いにするなら pause解除してOK。要らなければ消してOK）
+    setImportAutoFillPaused(false);
+
     if (importQueue.length === 0) {
       setImportInfo(
         'ストックが空です。CSVを貼り付けて「ストックに追加」を押してください。'
@@ -631,6 +639,8 @@ export default function SubmitPage() {
 
   // ★ 進捗を保存して通常投稿モードに戻る
   const handleSwitchToNormal = () => {
+    setImportAutoFillPaused(true); // ★ 以降、投稿しても自動で次へ行かない
+
     // importQueue と importIndex はそのまま（進捗は localStorage にも保存される）
     setQuestionType('single');
     setQuestion('');
@@ -644,6 +654,28 @@ export default function SubmitPage() {
     setMessage(
       'CSVからの進捗は保存されています。通常の投稿モードに切り替えました。'
     );
+  };
+
+  // ★ 読み込んだストックを全削除
+  const handleClearImportQueue = () => {
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm(
+        '読み込んだ問題ストックをすべて削除します。よろしいですか？'
+      );
+      if (!ok) return;
+    }
+
+    setImportQueue([]);
+    setImportIndex(0);
+    setImportText('');
+    setImportInfo('問題ストックをすべて削除しました。');
+
+    try {
+      window.localStorage.removeItem(IMPORT_QUEUE_KEY);
+      window.localStorage.removeItem(IMPORT_INDEX_KEY);
+    } catch (e) {
+      console.error('failed to clear import queue', e);
+    }
   };
 
   // ──────────────────────────────
@@ -734,13 +766,12 @@ export default function SubmitPage() {
               <span className="text-emerald-300 font-semibold">
                 「questionId,question,answers,...」
               </span>
-              形式の CSV テキストをそのまま貼り付けてください。
-              画像用の URL（
+              形式の CSV テキストをそのまま貼り付けてください。画像用の URL（
               <span className="text-slate-300">http〜</span>
               ）は自動で無視されます。
             </p>
             <textarea
-              className="w-full h-32 px-2 py-1 rounded bg-slate-950 border border-slate-700 text-[11px] font-mono leading-snug"
+              className="w-full h-32 px-2 py-1 rounded bg-slate-950 border border-slate-700 font-mono leading-snug text-[16px]"
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               placeholder="ここに CSV テキストを貼り付け..."
@@ -779,6 +810,14 @@ export default function SubmitPage() {
                 className="px-3 py-1 rounded-full bg-slate-900 border border-slate-500 text-slate-100 font-bold text-[11px]"
               >
                 進捗を保存して通常の投稿に戻る
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearImportQueue}
+                className="px-3 py-1 rounded-full bg-slate-900 border border-rose-500 text-rose-300 font-bold text-[11px]"
+              >
+                ストックをすべて削除
               </button>
             </div>
             {importInfo && (
@@ -843,11 +882,9 @@ export default function SubmitPage() {
               </label>
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              ・
-              <span className="font-semibold text-sky-200">解答内容</span>
+              ・<span className="font-semibold text-sky-200">解答内容</span>
               ：記述／単一／複数／並び替えの「回答欄の枠の数」と「入力した内容」がそのまま残ります。
-              {'\n'}・
-              <span className="font-semibold text-sky-200">解答欄</span>
+              {'\n'}・<span className="font-semibold text-sky-200">解答欄</span>
               ：「枠の数」だけ残し、中身は空にリセットされます。
             </p>
           </div>
@@ -859,7 +896,7 @@ export default function SubmitPage() {
           <div className="space-y-1 text-sm">
             <label className="block font-semibold">問題タイプ</label>
             <select
-              className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-600"
+              className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
               value={questionType}
               onChange={(e) => setQuestionType(e.target.value)}
             >
@@ -876,7 +913,7 @@ export default function SubmitPage() {
               問題 <span className="text-rose-400">必須</span>
             </label>
             <textarea
-              className="w-full h-24 px-2 py-1 rounded bg-slate-900 border border-slate-600"
+              className="w-full h-24 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
             />
@@ -890,7 +927,7 @@ export default function SubmitPage() {
                   正解 <span className="text-rose-400">必須</span>
                 </label>
                 <input
-                  className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-600"
+                  className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                   value={textAnswer}
                   onChange={(e) => setTextAnswer(e.target.value)}
                 />
@@ -903,7 +940,7 @@ export default function SubmitPage() {
                 {altTextAnswers.map((v, i) => (
                   <div key={i} className="flex gap-2 mb-1">
                     <input
-                      className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600"
+                      className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                       value={v}
                       onChange={(e) =>
                         handleArrayChange(i, e.target.value, setAltTextAnswers)
@@ -939,7 +976,7 @@ export default function SubmitPage() {
                 {correctChoices.map((v, i) => (
                   <div key={i} className="flex gap-2 mb-1">
                     <input
-                      className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600"
+                      className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                       value={v}
                       onChange={(e) =>
                         handleArrayChange(i, e.target.value, setCorrectChoices)
@@ -977,7 +1014,7 @@ export default function SubmitPage() {
                 {wrongChoices.map((v, i) => (
                   <div key={i} className="flex gap-2 mb-1">
                     <input
-                      className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600"
+                      className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                       value={v}
                       onChange={(e) =>
                         handleArrayChange(i, e.target.value, setWrongChoices)
@@ -1015,7 +1052,7 @@ export default function SubmitPage() {
               {orderChoices.map((v, i) => (
                 <div key={i} className="flex gap-2 mb-1">
                   <input
-                    className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600"
+                    className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                     value={v}
                     onChange={(e) =>
                       handleArrayChange(i, e.target.value, setOrderChoices)
