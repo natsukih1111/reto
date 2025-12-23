@@ -134,11 +134,27 @@ export default function MultiMeteorBattleClient() {
       setState(payload);
     };
 
-    const onEnded = (payload) => {
-      const meteors = Array.isArray(payload?.meteors) ? payload.meteors : [];
-      setLaneIds((prev) => reconcileLaneIds(prev, meteors, 3));
-      setState(payload);
+const onEnded = (payload) => {
+  const meteors = Array.isArray(payload?.meteors) ? payload.meteors : [];
+  setLaneIds((prev) => reconcileLaneIds(prev, meteors, 3));
+  setState(payload);
+
+  // ★試合後：履歴を保存して振り返りページへ
+  try {
+    const pack = {
+      roomId,
+      youSide: payload?.youSide ?? null,
+      winnerSide: payload?.winnerSide ?? null,
+      players: payload?.players ?? null,
+      history: Array.isArray(payload?.history) ? payload.history : [],
     };
+    sessionStorage.setItem('meteor_multi_result', JSON.stringify(pack));
+  } catch {}
+
+  // 遷移（少しだけ待つなら setTimeout でもOK）
+  router.push('/multi/meteor/result');
+};
+
 
     s.on('connect', onConnect);
     s.on('connect_error', onConnectError);

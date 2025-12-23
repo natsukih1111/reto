@@ -457,9 +457,13 @@ export default function KnowledgeTowerPage() {
   const [multiSelected, setMultiSelected] = useState([]);
   const [orderSelected, setOrderSelected] = useState([]);
 
-  // 履歴（振り返り用）
+  // 履歴（表示用：既存）
   const [floorHistory, setFloorHistory] = useState([]);
   const [bossHistory, setBossHistory] = useState([]);
+
+  // ★ 不備報告用（meteorと同じ形：まとめて渡す）
+  const [floorAnswerHistory, setFloorAnswerHistory] = useState([]); // [{question_id,text,userAnswerText,correctAnswerText}]
+  const [bossAnswerHistory, setBossAnswerHistory] = useState([]);
 
   // フロア○×表示
   const [judgeOverlay, setJudgeOverlay] = useState(null); // { ok: true/false }
@@ -500,6 +504,32 @@ export default function KnowledgeTowerPage() {
 
   const questionSeconds = Math.max(0, Math.floor(questionLeftMs / 1000));
   const bossSeconds = Math.max(0, Math.floor(bossLeftMs / 1000));
+
+  /* =========================
+     ★ 間違えた問題をDBへ登録（API）
+     - 失敗してもゲームは止めない
+     - あなたの実装に合わせて endpoint を変えたい場合はここだけ修正
+  ========================= */
+  async function recordMistake(questionId) {
+    const qid = questionId != null ? String(questionId) : null;
+    if (!qid) return;
+
+    // ここがあなたのAPIと違う場合：パスを合わせてOK
+    const endpoints = ['/api/mistakes/add'];
+
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question_id: qid }),
+        });
+        if (res.ok) return;
+      } catch {
+        // 次へ
+      }
+    }
+  }
 
   /* =========================
      デッキ（タグ内を使い切り保証 + 永続化）
@@ -803,6 +833,10 @@ export default function KnowledgeTowerPage() {
     setFloorHistory([]);
     setBossHistory([]);
 
+    // ★ まとめ用も初期化
+    setFloorAnswerHistory([]);
+    setBossAnswerHistory([]);
+
     setBossExplode(false);
     setShowCongrats(false);
     setJudgeOverlay(null);
@@ -890,13 +924,32 @@ export default function KnowledgeTowerPage() {
 
     const isCorrect = isTimeUp ? false : judgeAnswer(q, userAnswer);
 
+    const correctText = getCorrectTextForDisplay(q);
+    const userAnswerText = isTimeUp
+      ? '（時間切れ）'
+      : (getUserAnswerTextForDisplay(q, userAnswer) || '') || '（未回答）';
+
     const historyItem = {
       question: q,
       userAnswer,
       isCorrect,
-      correctText: getCorrectTextForDisplay(q),
-      userAnswerText: getUserAnswerTextForDisplay(q, userAnswer),
+      correctText,
+      userAnswerText,
     };
+
+    // ★ まとめ用（meteor同形式）
+    const qid = getQuestionId(q, 0);
+    const summaryItem = {
+      question_id: qid,
+      text: q.question || q.text || '',
+      userAnswerText,
+      correctAnswerText: String(correctText ?? ''),
+    };
+
+    // ★ 不正解（or 時間切れ）は「間違えた問題リスト」へ登録
+    if (!isCorrect) {
+      recordMistake(qid);
+    }
 
     setSelectedOption(null);
     setTextAnswer('');
@@ -913,6 +966,7 @@ export default function KnowledgeTowerPage() {
       else setFloorMiss((v) => v + 1);
 
       setFloorHistory((prev) => [...prev, historyItem]);
+      setFloorAnswerHistory((prev) => [...prev, summaryItem]); // ★追加
 
       setTimeout(() => {
         setJudgeOverlay(null);
@@ -957,6 +1011,7 @@ export default function KnowledgeTowerPage() {
     }
 
     setBossHistory((prev) => [...prev, historyItem]);
+    setBossAnswerHistory((prev) => [...prev, summaryItem]); // ★追加
 
     const nextCorrect = bossCorrect + (isCorrect ? 1 : 0);
     if (nextCorrect >= bossNeed) {
@@ -1064,16 +1119,10 @@ export default function KnowledgeTowerPage() {
           <h1 className="text-lg font-extrabold">ナレッジタワー</h1>
           <p className="text-sm text-rose-700 whitespace-pre-wrap">{initError}</p>
           <div className="flex flex-col gap-2">
-            <Link
-              href="/solo"
-              className="w-full py-2 rounded-full bg-sky-500 text-white text-sm font-bold hover:bg-sky-600"
-            >
+            <Link href="/solo" className="w-full py-2 rounded-full bg-sky-500 text-white text-sm font-bold hover:bg-sky-600">
               ソロメニューへ
             </Link>
-            <Link
-              href="/"
-              className="w-full py-2 rounded-full border border-sky-500 bg-white text-sky-700 text-sm font-bold hover:bg-sky-50"
-            >
+            <Link href="/" className="w-full py-2 rounded-full border border-sky-500 bg-white text-sky-700 text-sm font-bold hover:bg-sky-50">
               ホームへ
             </Link>
           </div>
@@ -1114,9 +1163,7 @@ export default function KnowledgeTowerPage() {
           <header className="flex items-start justify-between">
             <div>
               <h1 className="text-xl sm:text-2xl font-extrabold text-sky-900">🗼 ナレッジタワー</h1>
-              <p className="text-[11px] sm:text-xs text-sky-900/80 mt-1">
-                地上から天空まで続く塔を、知識で駆け上がろう。
-              </p>
+              <p className="text-[11px] sm:text-xs text-sky-900/80 mt-1">地上から天空まで続く塔を、知識で駆け上がろう。</p>
             </div>
             <div className="text-right text-[11px] sm:text-xs font-bold text-sky-900">
               <Link href="/solo" className="underline hover:text-sky-700">
@@ -1237,17 +1284,15 @@ export default function KnowledgeTowerPage() {
                     disabled={loadingQuestions || !allQuestionsRaw.length}
                     className={
                       'w-full py-3 rounded-2xl text-white font-extrabold shadow ' +
-                      (loadingQuestions || !allQuestionsRaw.length
-                        ? 'bg-slate-400 cursor-not-allowed'
-                        : 'bg-sky-600 hover:bg-sky-700')
+                      (loadingQuestions || !allQuestionsRaw.length ? 'bg-slate-400 cursor-not-allowed' : 'bg-sky-600 hover:bg-sky-700')
                     }
                   >
                     {selectedFloor}階に挑戦する
                   </button>
 
                   <div className="mt-2 text-[10px] text-slate-700">
-                    ボス戦は <span className="font-extrabold">制限時間7分</span>＋ マイチーム合計★{teamTotalStars}
-                    で <span className="font-extrabold"> +{Math.floor(bossBonusMs / 1000)}秒</span>。ミスで{' '}
+                    ボス戦は <span className="font-extrabold">制限時間7分</span>＋ マイチーム合計★{teamTotalStars} で{' '}
+                    <span className="font-extrabold"> +{Math.floor(bossBonusMs / 1000)}秒</span>。ミスで{' '}
                     <span className="font-extrabold text-rose-700">-20秒</span>。
                   </div>
 
@@ -1515,9 +1560,7 @@ export default function KnowledgeTowerPage() {
         {showCongrats && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60">
             <div className="text-center">
-              <div className="text-4xl sm:text-6xl font-extrabold drop-shadow-[0_0_18px_rgba(255,255,255,0.35)]">
-                CONGRATULATIONS 🎉
-              </div>
+              <div className="text-4xl sm:text-6xl font-extrabold drop-shadow-[0_0_18px_rgba(255,255,255,0.35)]">CONGRATULATIONS 🎉</div>
               <p className="mt-3 text-sm font-bold text-white/90">Tower Boss {selectedFloor}F を撃破！</p>
             </div>
           </div>
@@ -1564,8 +1607,7 @@ export default function KnowledgeTowerPage() {
             <div className="mt-4">
               <div
                 className={
-                  'relative w-full max-w-3xl mx-auto rounded-3xl overflow-hidden border border-white/10 shadow-2xl ' +
-                  (bossDamaged ? 'bossShake' : '')
+                  'relative w-full max-w-3xl mx-auto rounded-3xl overflow-hidden border border-white/10 shadow-2xl ' + (bossDamaged ? 'bossShake' : '')
                 }
               >
                 <img src="/tower/boss0.png" alt="boss-bg" className="w-full h-[260px] sm:h-[320px] object-cover opacity-90" />
@@ -1970,31 +2012,10 @@ export default function KnowledgeTowerPage() {
             </p>
           </div>
 
+          {/* ★ meteorと同じ：まとめて振り返り＆不備報告 */}
           <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <h2 className="text-sm font-extrabold mb-3">振り返り</h2>
-            <div className="space-y-3">
-              {floorHistory.map((h, idx) => (
-                <div key={h.question?._towerKey ?? idx} className="rounded-2xl border border-white/10 bg-black/25 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold">
-                      {idx + 1}. {h.isCorrect ? '✅ 正解' : '❌ 不正解'}
-                    </span>
-                    <span className="text-xs text-white/70">{h.question?.type ?? ''}</span>
-                  </div>
-                  <p className="mt-2 text-sm font-bold">{h.question?.question ?? h.question?.text}</p>
-                  <p className="mt-2 text-xs text-white/80">
-                    あなた：<span className="font-extrabold text-white">{h.userAnswerText || '（未回答）'}</span>
-                  </p>
-                  <p className="mt-1 text-xs text-white/80">
-                    正解：<span className="font-extrabold text-emerald-200">{h.correctText}</span>
-                  </p>
-                  <div className="mt-3">
-                    <QuestionReviewAndReport question={h.question} />
-                  </div>
-                </div>
-              ))}
-              {floorHistory.length === 0 && <p className="text-sm text-white/70">履歴がありません。</p>}
-            </div>
+            <h2 className="text-sm font-extrabold mb-3">問題の振り返り & 不備報告</h2>
+            <QuestionReviewAndReport questions={floorAnswerHistory} sourceMode="solo-knowledge-tower-floor" />
           </div>
 
           <div className="flex gap-2">
@@ -2046,31 +2067,10 @@ export default function KnowledgeTowerPage() {
             </p>
           </div>
 
+          {/* ★ meteorと同じ：まとめて振り返り＆不備報告 */}
           <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-            <h2 className="text-sm font-extrabold mb-3">振り返り</h2>
-            <div className="space-y-3">
-              {bossHistory.map((h, idx) => (
-                <div key={h.question?._towerKey ?? idx} className="rounded-2xl border border-white/10 bg-black/25 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold">
-                      {idx + 1}. {h.isCorrect ? '✅ 正解' : '❌ 不正解'}
-                    </span>
-                    <span className="text-xs text-white/70">{h.question?.type ?? ''}</span>
-                  </div>
-                  <p className="mt-2 text-sm font-bold">{h.question?.question ?? h.question?.text}</p>
-                  <p className="mt-2 text-xs text-white/80">
-                    あなた：<span className="font-extrabold text-white">{h.userAnswerText || '（未回答）'}</span>
-                  </p>
-                  <p className="mt-1 text-xs text-white/80">
-                    正解：<span className="font-extrabold text-emerald-200">{h.correctText}</span>
-                  </p>
-                  <div className="mt-3">
-                    <QuestionReviewAndReport question={h.question} />
-                  </div>
-                </div>
-              ))}
-              {bossHistory.length === 0 && <p className="text-sm text-white/70">履歴がありません。</p>}
-            </div>
+            <h2 className="text-sm font-extrabold mb-3">問題の振り返り & 不備報告</h2>
+            <QuestionReviewAndReport questions={bossAnswerHistory} sourceMode="solo-knowledge-tower-boss" />
           </div>
 
           <div className="flex gap-2">

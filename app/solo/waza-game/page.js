@@ -18,15 +18,36 @@ import Link from 'next/link';
  * - 半角全角 / 大文字小文字 / スペース 無視
  * - ～ / ー 無視
  * - ァ ィ ゥ ェ ォ 無視
+ *
+ * ★追加ルール
+ * D: ④ 使われた場所から推測（2回以上使われた技／場所2個以上表示）
+ * F: ⑤ 使われたキャラから推測（2回以上使われた技／使われたキャラ2人以上表示）
+ * G: ⑥ 効果音 + 話数から推測
+ *
+ * ★Excel列
+ * A: 技名 name
+ * B: 使ったキャラ user
+ * C: 使われたキャラ target
+ * D: 話数 chapter
+ * E: 効果音 sfx
+ * F: 場所 place
+ *
+ * ★注意
+ * C/D/E が "ー" のみなら空欄扱いでスルー
  */
 
-const VER = 'その他〇刀流やゴムゴムのなども問わない';
+const VER = 'WAZA v2025-12-23 (④⑤表示全件+判定修正)';
 
 const RULES = [
   { key: 'A', name: '① 漢字1文字を含む技' },
   { key: 'B', name: '② 前後から推測（技名）' },
-  { key: 'E', name: '② 前後から推測（イージー）' }, // ★追加
+  { key: 'E', name: '② 前後から推測（イージー）' },
   { key: 'C', name: '③ 漢字4つから使用者' },
+
+  { key: 'D', name: '④ 場所から推測（技名）' },
+  { key: 'F', name: '⑤ 使われたキャラから推測（技名）' },
+  { key: 'G', name: '⑥ 効果音＋話数から推測（技名）' },
+
   { key: 'M', name: 'ミックス' },
 ];
 
@@ -37,6 +58,28 @@ const DURATIONS = [
 
 const REVEAL_MS = 3000;
 const PENALTY_MS = 10000;
+
+/* =========================
+   小物ユーティリティ
+========================= */
+
+function cleanCell(v) {
+  // "ー" だけは空欄扱い（指示）
+  if (v == null) return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  if (s === 'ー') return '';
+  return s;
+}
+
+function splitJPList(raw) {
+  const s = cleanCell(raw);
+  if (!s) return [];
+  return s
+    .split(/[、,]/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 function stripParens(s) {
   if (!s) return '';
@@ -79,24 +122,37 @@ function normalizeWazaName(raw) {
     'r・a',
     'r.a',
     'ra',
+    'おでん',
+    '狐火流',
+    'ラーメン拳法',
   ];
-
   for (const t of dropTokens) s = s.split(t).join('');
 
+  // 一刀流〜九刀流 無視（スペース入りも想定）
   s = s.replace(/(一|二|三|四|八|九)\s*刀流/gu, '');
+
+  // っ/ッ 無視
   s = s.replace(/[っッ]/g, '');
+
+  // 小さい母音 無視
   s = s.replace(/[ァィゥェォ]/g, '');
+
+  // ～ / ー 無視（技名内の長音は無視、ただし中黒は保持）
   s = s.replace(/[～ー]/g, '');
 
+  // 中黒だけ保持、他記号は削除
   const DOT = '・';
   s = s.replaceAll(DOT, '__DOT__');
   s = s.replace(/[\p{P}\p{S}]/gu, '');
   s = s.replaceAll('__DOT__', DOT);
 
+  // スペース無視
   s = s.replace(/\s+/g, '');
+
   return s;
 }
 
+// 使用者名用（ゆるめ）
 function normalizeUserName(raw) {
   if (!raw) return '';
   let s = normalizeCommon(raw);
@@ -114,7 +170,19 @@ function pickRandomIndex(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// best
+function uniq(arr) {
+  return Array.from(new Set((arr || []).filter(Boolean)));
+}
+
+// ★④⑤：2つに切らず「2以上なら全部出す」
+function ensureAllDistinct(arr) {
+  return uniq(arr);
+}
+
+/* =========================
+   ベスト保存
+========================= */
+
 function bestKey(ruleKey, durationSec) {
   return `waza_best_${ruleKey}_${durationSec}`;
 }
@@ -134,10 +202,20 @@ function saveBest(ruleKey, durationSec, score) {
   return false;
 }
 
-// ★questionから答え表示を作る（useMemoに依存しない：時間切れ対策）
+/* =========================
+   答え表示生成（時間切れ対策）
+========================= */
 function buildRevealLinesFromQuestion(q) {
   if (!q) return [];
-  if (q.type === 'A' || q.type === 'B' || q.type === 'E') return (q.corrects || []).map((x) => x.name);
+
+  // 技名を答える系
+  if (q.type === 'A' || q.type === 'B' || q.type === 'E' || q.type === 'D' || q.type === 'F' || q.type === 'G') {
+    // 同じ技が複数行あるので uniq して見やすく
+    const names = (q.corrects || []).map((x) => x.name).filter(Boolean);
+    return uniq(names);
+  }
+
+  // 使用者当て
   if (q.type === 'C') {
     const lines = [];
     lines.push(`【使用者】${q.user}`);
@@ -147,6 +225,7 @@ function buildRevealLinesFromQuestion(q) {
     }
     return lines;
   }
+
   return [];
 }
 
@@ -177,15 +256,14 @@ export default function WazaGamePage() {
   const [bests, setBests] = useState({});
   const inputRef = useRef(null);
 
-  // ★追加：最新questionをrefに保持（時間切れの “古いquestion” 問題を潰す）
+  // ★最新questionをrefに保持（時間切れの “古いquestion” 問題を潰す）
   const questionRef = useRef(null);
   useEffect(() => {
     questionRef.current = question;
   }, [question]);
 
-  // ★追加：ゲーム終了時に最後の問題の答えを結果画面で見せる
+  // ★ゲーム終了時に最後の問題の答えを結果画面で見せる
   const [finalReveal, setFinalReveal] = useState(null);
-  // { title: string, lines: string[] }
 
   // データ読み込み
   useEffect(() => {
@@ -200,10 +278,22 @@ export default function WazaGamePage() {
         if (!r.ok || !d.ok) throw new Error(d.error || `load failed: ${r.status}`);
 
         const items = Array.isArray(d.items) ? d.items : [];
-        items.sort((a, b) => (a.idx ?? 0) - (b.idx ?? 0));
+
+        // ★「ー」を空欄扱いにしたい列を掃除（C/D/E）
+        const cleaned = items.map((it) => ({
+          ...it,
+          name: cleanCell(it.name),
+          user: cleanCell(it.user),
+          target: cleanCell(it.target), // C列
+          chapter: cleanCell(it.chapter), // D列
+          sfx: cleanCell(it.sfx), // E列
+          place: cleanCell(it.place), // F列
+        }));
+
+        cleaned.sort((a, b) => (a.idx ?? 0) - (b.idx ?? 0));
 
         if (!alive) return;
-        setAll(items);
+        setAll(cleaned);
       } catch (e) {
         if (!alive) return;
         setLoadErr(e?.message || 'unknown error');
@@ -229,11 +319,11 @@ export default function WazaGamePage() {
     return Array.from(set);
   }, [all]);
 
-  // 使用者→技配列
+  // 使用者→技配列（③用）
   const byUser = useMemo(() => {
     const map = new Map();
     for (const it of all) {
-      const u = (it.user ?? '').trim();
+      const u = cleanCell(it.user);
       if (!u) continue;
       if (!map.has(u)) map.set(u, []);
       map.get(u).push(it);
@@ -241,10 +331,89 @@ export default function WazaGamePage() {
     return map;
   }, [all]);
 
+  /**
+   * ④ 場所から推測
+   * - 2回以上使われた「同一技名」グループ
+   * - place（F列）が2種類以上あるグループだけ
+   */
+  const placeGroups = useMemo(() => {
+    const map = new Map(); // normName -> { key, name, rows, places:Set }
+    for (const it of all) {
+      const name = cleanCell(it.name);
+      if (!name) continue;
+      const p = cleanCell(it.place);
+      if (!p) continue;
+
+      const key = normalizeWazaName(name);
+      if (!key) continue;
+
+      if (!map.has(key)) map.set(key, { key, name, rows: [], places: new Set() });
+      const g = map.get(key);
+      g.rows.push(it);
+      g.places.add(p);
+    }
+
+    const out = [];
+    for (const g of map.values()) {
+      if (g.rows.length >= 2 && g.places.size >= 2) out.push(g);
+    }
+    return out;
+  }, [all]);
+
+  /**
+   * ⑤ 使われたキャラから推測
+   * - 2回以上使われた「同一技名」グループ
+   * - target（C列）が2人以上（ユニーク2+）
+   */
+  const targetGroups = useMemo(() => {
+    const map = new Map(); // normName -> { key, name, rows, targets:Set }
+    for (const it of all) {
+      const name = cleanCell(it.name);
+      if (!name) continue;
+
+      const targets = splitJPList(it.target);
+      if (!targets.length) continue;
+
+      const key = normalizeWazaName(name);
+      if (!key) continue;
+
+      if (!map.has(key)) map.set(key, { key, name, rows: [], targets: new Set() });
+      const g = map.get(key);
+      g.rows.push(it);
+      for (const t of targets) g.targets.add(t);
+    }
+
+    const out = [];
+    for (const g of map.values()) {
+      if (g.rows.length >= 2 && g.targets.size >= 2) out.push(g);
+    }
+    return out;
+  }, [all]);
+
+  /**
+   * ⑥ 効果音 + 話数から推測
+   * - sfx(E列) と chapter(D列) が両方ある行だけ対象（"ー" は除外済み）
+   * - 同じ (sfx,chapter) が複数技に当たる可能性もあるので group 化
+   */
+  const sfxChapterGroups = useMemo(() => {
+    const map = new Map(); // `${chapter}__${sfx}` -> { chapter, sfx, corrects:[] }
+    for (const it of all) {
+      const name = cleanCell(it.name);
+      const ch = cleanCell(it.chapter);
+      const sfx = cleanCell(it.sfx);
+      if (!name || !ch || !sfx) continue;
+
+      const key = `${ch}__${sfx}`;
+      if (!map.has(key)) map.set(key, { chapter: ch, sfx, corrects: [] });
+      map.get(key).corrects.push(it);
+    }
+    return Array.from(map.values()).filter((g) => (g.corrects || []).length >= 1);
+  }, [all]);
+
   // bests
   useEffect(() => {
     const obj = {};
-    for (const rr of ['A', 'B', 'E', 'C', 'M']) {
+    for (const rr of ['A', 'B', 'E', 'C', 'D', 'F', 'G', 'M']) {
       for (const dd of DURATIONS) obj[`${rr}_${dd.sec}`] = loadBest(rr, dd.sec);
     }
     setBests(obj);
@@ -268,7 +437,6 @@ export default function WazaGamePage() {
     timerIdRef.current = null;
   }
 
-  // ★タイマー終了は「最新questionRef」を使ってfinishする
   function startTimer() {
     stopTimer();
     const now = Date.now();
@@ -297,7 +465,9 @@ export default function WazaGamePage() {
     return false;
   }
 
-  // ===== 問題生成 =====
+  /* =========================
+     問題生成
+  ========================= */
 
   function buildAnswersByContainsKanji(kanji) {
     const k = String(kanji || '');
@@ -308,7 +478,7 @@ export default function WazaGamePage() {
   function makeQuestionFor(ruleKey) {
     if (!all.length) return null;
 
-    // ① 漢字1文字を含む技（技名）
+    // ① 漢字1文字を含む技
     if (ruleKey === 'A') {
       for (let t = 0; t < 60; t++) {
         const k = sample(kanjiPool.length ? kanjiPool : ['麦']);
@@ -320,7 +490,7 @@ export default function WazaGamePage() {
       return { type: 'A', kanji: k, corrects: buildAnswersByContainsKanji(k) };
     }
 
-    // ② 前後から推測（技名：頭/末だけ）
+    // ② 前後から推測（頭/末）
     if (ruleKey === 'B') {
       if (all.length < 3) return null;
       const i = pickRandomIndex(1, all.length - 2);
@@ -331,20 +501,15 @@ export default function WazaGamePage() {
       const prevN = normalizeWazaName(prev.name);
       const nextN = normalizeWazaName(next.name);
 
-      const prevStart = prevN ? prevN[0] : '';
-      const prevEnd = prevN ? prevN[prevN.length - 1] : '';
-      const nextStart = nextN ? nextN[0] : '';
-      const nextEnd = nextN ? nextN[nextN.length - 1] : '';
-
       return {
         type: 'B',
-        prev: { start: prevStart, end: prevEnd },
-        next: { start: nextStart, end: nextEnd },
+        prev: { start: prevN ? prevN[0] : '', end: prevN ? prevN[prevN.length - 1] : '' },
+        next: { start: nextN ? nextN[0] : '', end: nextN ? nextN[nextN.length - 1] : '' },
         corrects: [mid],
       };
     }
 
-    // ★追加：② 前後から推測（イージー：前後は技名全文）
+    // ②（イージー：前後全文）
     if (ruleKey === 'E') {
       if (all.length < 3) return null;
       const i = pickRandomIndex(1, all.length - 2);
@@ -387,10 +552,10 @@ export default function WazaGamePage() {
         for (const w of four) {
           const s = normalizeWazaName(w.name);
           const m = s.match(/\p{Script=Han}/gu) || [];
-          const uniq = Array.from(new Set(m)).filter((ch) => !used.has(ch));
-          if (uniq.length === 0) break;
+          const uniqHan = Array.from(new Set(m)).filter((ch) => !used.has(ch));
+          if (uniqHan.length === 0) break;
 
-          const ch = sample(uniq);
+          const ch = sample(uniqHan);
           if (!ch) break;
 
           used.add(ch);
@@ -411,11 +576,60 @@ export default function WazaGamePage() {
       return null;
     }
 
+    // ④ 場所から推測（技名）
+    if (ruleKey === 'D') {
+      if (placeGroups.length === 0) return null;
+      const g = sample(placeGroups);
+      if (!g) return null;
+
+      // ★2つに切らない：3つ以上も全部表示
+      const places = ensureAllDistinct(Array.from(g.places));
+
+      return {
+        type: 'D',
+        places,
+        // ★判定を安定させるため、技名グループの正解キーを持つ
+        correctKey: g.key,
+        corrects: g.rows, // 表示用
+      };
+    }
+
+    // ⑤ 使われたキャラから推測（技名）
+    if (ruleKey === 'F') {
+      if (targetGroups.length === 0) return null;
+      const g = sample(targetGroups);
+      if (!g) return null;
+
+      // ★2つに切らない：3つ以上も全部表示
+      const targets = ensureAllDistinct(Array.from(g.targets));
+
+      return {
+        type: 'F',
+        targets,
+        correctKey: g.key,
+        corrects: g.rows,
+      };
+    }
+
+    // ⑥ 効果音 + 話数から推測（技名）
+    if (ruleKey === 'G') {
+      if (sfxChapterGroups.length === 0) return null;
+      const g = sample(sfxChapterGroups);
+      if (!g) return null;
+
+      return {
+        type: 'G',
+        chapter: g.chapter,
+        sfx: g.sfx,
+        corrects: g.corrects,
+      };
+    }
+
     return null;
   }
 
   function newQuestion() {
-    const pool = ['A', 'B', 'E', 'C']; // ★ミックスにEも混ぜる
+    const pool = ['A', 'B', 'E', 'C', 'D', 'F', 'G'];
     const picked = rule === 'M' ? sample(pool) : rule;
 
     if (!picked) {
@@ -429,7 +643,7 @@ export default function WazaGamePage() {
     if (!q) {
       setQuestion(null);
       setAnswer('');
-      setJudgeFlash({ ok: false, msg: '問題生成に失敗…（③はデータ次第）' });
+      setJudgeFlash({ ok: false, msg: '問題生成に失敗…（データ不足かも）' });
       return;
     }
 
@@ -457,6 +671,7 @@ export default function WazaGamePage() {
 
   function finishGame(qSnapshot) {
     const q = qSnapshot || null;
+
     if (q) {
       const title = q.type === 'C' ? '最後の問題の答え（使用者）' : '最後の問題の答え';
       const lines = buildRevealLinesFromQuestion(q);
@@ -477,7 +692,7 @@ export default function WazaGamePage() {
     const improved = saveBest(rule, durationSec, correctCount);
 
     const obj = {};
-    for (const rr of ['A', 'B', 'E', 'C', 'M']) {
+    for (const rr of ['A', 'B', 'E', 'C', 'D', 'F', 'G', 'M']) {
       for (const dd of DURATIONS) obj[`${rr}_${dd.sec}`] = loadBest(rr, dd.sec);
     }
     setBests(obj);
@@ -501,13 +716,21 @@ export default function WazaGamePage() {
   function judgeAnswer(q, userRaw) {
     if (!q) return { ok: false };
 
-    if (q.type === 'A' || q.type === 'B' || q.type === 'E') {
+    // 技名を答える系（A/B/E/D/F/G）
+    if (q.type === 'A' || q.type === 'B' || q.type === 'E' || q.type === 'D' || q.type === 'F' || q.type === 'G') {
       const ua = normalizeWazaName(userRaw);
       if (!ua) return { ok: false, empty: true };
+
+      // ★④⑤：グループ判定（同条件の技なら確実に正解）
+      if ((q.type === 'D' || q.type === 'F') && q.correctKey) {
+        return { ok: ua === q.correctKey };
+      }
+
       const ok = (q.corrects || []).some((ans) => normalizeWazaName(ans.name) === ua);
       return { ok };
     }
 
+    // 使用者当て（C）
     if (q.type === 'C') {
       const ua = normalizeUserName(userRaw);
       if (!ua) return { ok: false, empty: true };
@@ -570,6 +793,7 @@ export default function WazaGamePage() {
 
   const revealLines = useMemo(() => buildRevealLinesFromQuestion(question), [question]);
 
+  // UI
   const card = {
     background: 'rgba(255,255,255,0.92)',
     borderRadius: 18,
@@ -607,6 +831,17 @@ export default function WazaGamePage() {
     whiteSpace: 'nowrap',
   });
 
+  const badge = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '6px 10px',
+    borderRadius: 999,
+    fontWeight: 950,
+    background: 'rgba(227,242,253,0.85)',
+    border: '1px solid rgba(13,71,161,0.18)',
+  };
+
   const small = { fontSize: 12, opacity: 0.85 };
 
   const ruleLabel = useMemo(() => {
@@ -614,38 +849,22 @@ export default function WazaGamePage() {
     return r ? r.name : rule;
   }, [rule]);
 
-return (
-  <div
-    className="gameBG"
-    style={{
-      minHeight: '100vh',
-      padding: 14,
-      color: '#0b1b2a',
-      position: 'relative',
-      overflow: 'hidden',
-    }}
-  >
-    {/* 背景：レイアウトに影響しない fixed */}
+  return (
     <div
-      className="bgClouds"
+      className="gameBG"
       style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: -2,
-        pointerEvents: 'none',
+        minHeight: '100vh',
+        padding: 14,
+        color: '#0b1b2a',
+        position: 'relative',
+        overflow: 'hidden',
       }}
-    />
-    <div
-      className="bgSea"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: -1,
-        pointerEvents: 'none',
-      }}
-    />
+    >
+      {/* 背景：レイアウトに影響しない fixed */}
+      <div className="bgClouds" style={{ position: 'fixed', inset: 0, zIndex: -2, pointerEvents: 'none' }} />
+      <div className="bgSea" style={{ position: 'fixed', inset: 0, zIndex: -1, pointerEvents: 'none' }} />
 
-    <div style={{ maxWidth: 780, margin: '0 auto', display: 'grid', gap: 12 }}>
+      <div style={{ maxWidth: 780, margin: '0 auto', display: 'grid', gap: 12 }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
           <div>
@@ -772,7 +991,7 @@ return (
             <div style={{ ...card, ...neon, padding: 12 }}>
               <div style={{ fontWeight: 950, marginBottom: 8 }}>自己ベスト（正解数）</div>
               <div style={{ display: 'grid', gap: 6 }}>
-                {['A', 'B', 'E', 'C', 'M'].map((rk) => (
+                {['A', 'B', 'E', 'C', 'D', 'F', 'G', 'M'].map((rk) => (
                   <div
                     key={rk}
                     style={{
@@ -826,28 +1045,13 @@ return (
                     <>
                       <div style={{ fontWeight: 950, fontSize: 16 }}>② 前後の情報から「間に入る技名」を答えよ</div>
                       <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
-                        <div
-                          style={{
-                            background: 'rgba(255,255,255,0.70)',
-                            border: '1px solid rgba(0,0,0,0.06)',
-                            borderRadius: 14,
-                            padding: '10px 12px',
-                          }}
-                        >
+                        <div style={{ background: 'rgba(255,255,255,0.70)', border: '1px solid rgba(0,0,0,0.06)', borderRadius: 14, padding: '10px 12px' }}>
                           <div style={{ fontWeight: 950 }}>前</div>
                           <div style={{ marginTop: 2 }}>
                             先頭「<b>{question.prev.start}</b>」／末尾「<b>{question.prev.end}</b>」
                           </div>
                         </div>
-
-                        <div
-                          style={{
-                            background: 'rgba(255,255,255,0.70)',
-                            border: '1px solid rgba(0,0,0,0.06)',
-                            borderRadius: 14,
-                            padding: '10px 12px',
-                          }}
-                        >
+                        <div style={{ background: 'rgba(255,255,255,0.70)', border: '1px solid rgba(0,0,0,0.06)', borderRadius: 14, padding: '10px 12px' }}>
                           <div style={{ fontWeight: 950 }}>後</div>
                           <div style={{ marginTop: 2 }}>
                             先頭「<b>{question.next.start}</b>」／末尾「<b>{question.next.end}</b>」
@@ -860,32 +1064,15 @@ return (
 
                   {question.type === 'E' && (
                     <>
-                      <div style={{ fontWeight: 950, fontSize: 16 }}>
-                        ②（イージー）前後の技名から「間に入る技名」を答えよ
-                      </div>
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>②（イージー）前後の技名から「間に入る技名」を答えよ</div>
                       <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
-                        <div
-                          style={{
-                            background: 'rgba(255,255,255,0.70)',
-                            border: '1px solid rgba(0,0,0,0.06)',
-                            borderRadius: 14,
-                            padding: '10px 12px',
-                          }}
-                        >
+                        <div style={{ background: 'rgba(255,255,255,0.70)', border: '1px solid rgba(0,0,0,0.06)', borderRadius: 14, padding: '10px 12px' }}>
                           <div style={{ fontWeight: 950 }}>前</div>
-                          <div style={{ marginTop: 2, fontWeight: 900 }}>{question.prev.full}</div>
+                          <div style={{ marginTop: 2, fontWeight: 900, whiteSpace: 'pre-wrap' }}>{question.prev.full}</div>
                         </div>
-
-                        <div
-                          style={{
-                            background: 'rgba(255,255,255,0.70)',
-                            border: '1px solid rgba(0,0,0,0.06)',
-                            borderRadius: 14,
-                            padding: '10px 12px',
-                          }}
-                        >
+                        <div style={{ background: 'rgba(255,255,255,0.70)', border: '1px solid rgba(0,0,0,0.06)', borderRadius: 14, padding: '10px 12px' }}>
                           <div style={{ fontWeight: 950 }}>後</div>
-                          <div style={{ marginTop: 2, fontWeight: 900 }}>{question.next.full}</div>
+                          <div style={{ marginTop: 2, fontWeight: 900, whiteSpace: 'pre-wrap' }}>{question.next.full}</div>
                         </div>
                       </div>
                       <div style={{ ...small, marginTop: 6 }}>※ ここは基本1つだけ正解。</div>
@@ -896,14 +1083,7 @@ return (
                     <>
                       <div style={{ fontWeight: 950, fontSize: 16 }}>③ 漢字4つから「使用者」を当てよ</div>
                       <div style={{ ...small, marginTop: 6 }}>※ 4つの漢字は「同じキャラの別々の技」から抽出</div>
-                      <div
-                        style={{
-                          marginTop: 12,
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(4, 1fr)',
-                          gap: 10,
-                        }}
-                      >
+                      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
                         {question.kanjis.map((k, i) => (
                           <div
                             key={`${k}_${i}`}
@@ -920,6 +1100,50 @@ return (
                             {k}
                           </div>
                         ))}
+                      </div>
+                    </>
+                  )}
+
+                  {question.type === 'D' && (
+                    <>
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>④ 使われた場所から「技名」を答えよ</div>
+                      <div style={{ ...small, marginTop: 6 }}>※ 2回以上使われた技から出題（場所が複数ある技のみ）。</div>
+                      <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {(question.places || []).map((p) => (
+                          <span key={p} style={badge}>
+                            📍 {p}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {question.type === 'F' && (
+                    <>
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>⑤ 使われたキャラから「技名」を答えよ</div>
+                      <div style={{ ...small, marginTop: 6 }}>※ 2回以上使われた技から出題（使われたキャラが複数いる技のみ）。</div>
+                      <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {(question.targets || []).map((t) => (
+                          <span key={t} style={badge}>
+                            🎯 {t}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {question.type === 'G' && (
+                    <>
+                      <div style={{ fontWeight: 950, fontSize: 16 }}>⑥ 効果音＋話数から「技名」を答えよ</div>
+                      <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                        <div style={{ ...badge, justifyContent: 'flex-start', gap: 8 }}>
+                          <span style={{ fontWeight: 1000 }}>話数</span>
+                          <span>{question.chapter}</span>
+                        </div>
+                        <div style={{ ...badge, justifyContent: 'flex-start', gap: 8 }}>
+                          <span style={{ fontWeight: 1000 }}>効果音</span>
+                          <span style={{ whiteSpace: 'pre-wrap' }}>{question.sfx}</span>
+                        </div>
                       </div>
                     </>
                   )}
@@ -987,9 +1211,7 @@ return (
                         background: 'rgba(255,255,255,0.86)',
                       }}
                     >
-                      <div style={{ fontWeight: 950, marginBottom: 8 }}>
-                        {question.type === 'C' ? '正解（使用者）' : '正解になり得る答え'}
-                      </div>
+                      <div style={{ fontWeight: 950, marginBottom: 8 }}>{question.type === 'C' ? '正解（使用者）' : '正解になり得る答え'}</div>
                       <div style={{ maxHeight: 180, overflow: 'auto', display: 'grid', gap: 6 }}>
                         {revealLines.map((t, idx) => (
                           <div
@@ -1046,7 +1268,6 @@ return (
             <div style={{ display: 'grid', gap: 10 }}>
               <div style={{ fontWeight: 1000, fontSize: 22 }}>⏱ 終了！</div>
 
-              {/* ★最後の問題の答え */}
               {finalReveal && Array.isArray(finalReveal.lines) && finalReveal.lines.length > 0 && (
                 <div style={{ ...card, ...neon, padding: 12 }}>
                   <div style={{ fontWeight: 950, marginBottom: 8 }}>{finalReveal.title}</div>

@@ -29,7 +29,6 @@ const OPENING_MS = 45000;
 const ANSWER_COOLDOWN_MS = 150;
 
 // ★隕石2つ以上向かってきている側は「持ち時間」を追加で削る（プレッシャー）
-// 例：2個なら +1倍、3個なら +2倍
 const MULTI_INCOMING_DRAIN = true;
 
 function log(...args) {
@@ -85,6 +84,10 @@ function applyQuestionToMeteor(m, q) {
   m.text = q.text;
   m.answerText = q.answerText;
   m.altAnswers = q.altAnswers;
+
+  // ★問題が変わったら、両者ミス判定の履歴もリセット
+  m.lastWrongSide = null;
+  m.wrongStreak = 0;
 }
 
 function buildMeteor(questions, targetSide, startMs) {
@@ -102,7 +105,25 @@ function buildMeteor(questions, targetSide, startMs) {
     qid: q.id,
     answerText: q.answerText,
     altAnswers: q.altAnswers,
+
+    // ★両者ミスで新問題にするための状態
+    lastWrongSide: null, // 'A' | 'B' | null
+    wrongStreak: 0, // 連続ミス回数（参考）
   };
+}
+
+// ★不備報告用：履歴追加
+function pushHistory(room, side, qid, text, userAnswerText, correctAnswerText) {
+  if (!room) return;
+  if (!room.history) room.history = [];
+  room.history.push({
+    side,
+    question_id: qid ?? null,
+    text: text ?? '',
+    userAnswerText: userAnswerText ?? '',
+    correctAnswerText: correctAnswerText ?? '',
+    at: Date.now(),
+  });
 }
 
 function emitState(io, roomId) {
@@ -158,6 +179,9 @@ function endGame(io, roomId, winnerSide) {
       youSide: room.socketSideMap[socketId],
       message: room.message || '',
       winnerSide: room.winnerSide || null,
+
+      // ★試合後振り返り用（クライアントで遷移に使う）
+      history: Array.isArray(room.history) ? room.history : [],
     });
   }
 }
@@ -207,6 +231,9 @@ export function setupMeteorMode(io) {
       meteors: [],
       tick: null,
       lastAnswerAt: {}, // socket.id -> timestamp
+
+      // ★不備報告：全履歴
+      history: [],
     };
 
     // 開幕3つは45秒で firstTarget 側へ
@@ -254,6 +281,16 @@ export function setupMeteorMode(io) {
         if (m.remainingMs <= 0) {
           const target = m.target;
 
+          // ★履歴：時間切れ
+          pushHistory(
+            r,
+            target,
+            m.qid,
+            m.text,
+            '（時間切れ）',
+            m.answerText
+          );
+
           // 直撃：持ち時間 -30秒
           r.players[target].hpMs = Math.max(0, r.players[target].hpMs - HIT_PENALTY_MS);
           r.message = `${r.players[target].name} に直撃！ -30秒`;
@@ -263,10 +300,25 @@ export function setupMeteorMode(io) {
             return;
           }
 
-          // 直撃した隕石：同じ問題のまま、相手側へ「30秒スタート」で返す
+          // ★両者ミス判定：前回ミスした側と今回が違うなら「両者ミス」
+          const bothWrong = m.lastWrongSide && m.lastWrongSide !== target;
+
+          m.lastWrongSide = target;
+          m.wrongStreak = (m.wrongStreak || 0) + 1;
+
+          // 直撃した隕石：相手側へ返す
           m.target = otherSide(target);
+
+          // 次は中央スタート30秒（いままで通り）
           m.limitMs = CENTER_MS;
           m.remainingMs = CENTER_MS;
+
+          if (bothWrong) {
+            // ★両者ミスなら「問題を差し替える（A→B→Aループを止める）」
+            const newQ = pickQuestion(r.questions);
+            if (newQ) applyQuestionToMeteor(m, newQ);
+            r.message = `${r.players[target].name} と ${r.players[otherSide(target)].name} が連続でミス！ 問題が更新された`;
+          }
         }
       }
 
@@ -378,6 +430,16 @@ export function setupMeteorMode(io) {
       }
 
       const m = room.meteors[hitIndex];
+
+      // ★履歴：正解（打ち返し）
+      pushHistory(
+        room,
+        side,
+        m.qid,
+        m.text,
+        inputText || '（回答記録なし）',
+        m.answerText
+      );
 
       // 反転時の相手側時間 = 60秒 -（今ターゲットまでの残り）
       let nextLimitMs = SHIP_TO_SHIP_MS - Math.max(0, m.remainingMs);

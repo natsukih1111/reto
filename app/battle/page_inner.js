@@ -193,6 +193,58 @@ function BattlePageInner() {
       .catch(() => setMe(null));
   }, []);
 
+// ====== PVP: battle:start を受けて問題開始 ======
+useEffect(() => {
+  if (isAiMode || isStoryMode) return;
+
+  if (!socket) {
+    const url =
+      process.env.NEXT_PUBLIC_SOCKET_URL ||
+      `${window.location.protocol}//${window.location.hostname}:4000`;
+
+    socket = io(url, { transports: ['websocket'] });
+  }
+
+  const s = socket;
+
+  const onConnect = () => {
+    setSocketId(s.id);
+  };
+
+  const onBattleStart = (payload) => {
+    console.log('[battle:start]', payload);
+
+    setOppName(payload.opponentName || '相手');
+    setMyScore(0);
+    setMyTime(0);
+    setOppScore(0);
+    setOppTime(0);
+    setJudge(null);
+    setResult(null);
+
+    // ★ここが肝：これが無いと解答もタイマーも動かない
+    setPhase('question');
+  };
+
+  // ★ roomId を持って join
+  if (roomId) {
+    s.emit('battle:join', {
+      roomId,
+      playerName: me?.display_name || me?.username || 'プレイヤー',
+      userId: me?.id ?? null,
+    });
+  }
+
+  s.on('connect', onConnect);
+  s.on('battle:start', onBattleStart);
+
+  return () => {
+    s.off('connect', onConnect);
+    s.off('battle:start', onBattleStart);
+  };
+}, [roomId, isAiMode, isStoryMode, me?.id]);
+
+
   // ====== ストーリーAI: 相手決定 & タグ提示 ======
   useEffect(() => {
     if (!isStoryMode) return;
