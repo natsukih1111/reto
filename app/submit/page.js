@@ -45,7 +45,7 @@ function cleanArray(arr) {
 }
 
 // ──────────────────────────────
-// CSV 解析用ユーティリティ
+// CSV / TSV 解析用ユーティリティ
 // ──────────────────────────────
 
 // テキスト全体を「クォート内の改行は維持しつつ」行に分割
@@ -54,7 +54,7 @@ function splitCsvLines(text) {
   let current = '';
   let inQuotes = false;
 
-  for (let i = 0; i < text.length; i++) {
+  for (let i = 0; i < (text || '').length; i++) {
     const ch = text[i];
 
     if (ch === '"') {
@@ -67,34 +67,28 @@ function splitCsvLines(text) {
         current += ch;
       }
     } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
-      if (current.trim() !== '') {
-        lines.push(current);
-      }
+      if (current.trim() !== '') lines.push(current);
       current = '';
       // \r\n の場合に二重処理しない
-      if (ch === '\r' && text[i + 1] === '\n') {
-        i++;
-      }
+      if (ch === '\r' && text[i + 1] === '\n') i++;
     } else {
       current += ch;
     }
   }
 
-  if (current.trim() !== '') {
-    lines.push(current);
-  }
-
+  if (current.trim() !== '') lines.push(current);
   return lines;
 }
 
-// 1行を CSV セル配列に分割（カンマ区切り / " で囲まれた部分対応）
-function parseCsvLine(line) {
+// 1行をセル配列に分割（区切り：カンマ or タブ / " で囲まれた部分対応）
+function parseDelimitedLine(line, delimiter) {
   const cells = [];
   let current = '';
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
+  for (let i = 0; i < (line || '').length; i++) {
     const ch = line[i];
+
     if (ch === '"') {
       if (inQuotes && line[i + 1] === '"') {
         current += '"';
@@ -102,7 +96,7 @@ function parseCsvLine(line) {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (ch === ',' && !inQuotes) {
+    } else if (ch === delimiter && !inQuotes) {
       cells.push(current);
       current = '';
     } else {
@@ -113,6 +107,15 @@ function parseCsvLine(line) {
   return cells;
 }
 
+// 区切り推定：タブが多ければTSV扱い、なければCSV
+function detectDelimiter(text) {
+  const t = text || '';
+  const sample = t.slice(0, 2000);
+  const tabCount = (sample.match(/\t/g) || []).length;
+  const commaCount = (sample.match(/,/g) || []).length;
+  return tabCount > commaCount ? '\t' : ',';
+}
+
 // 質問テキスト/選択肢から画像URL部分を除去
 function stripImagePart(str) {
   if (!str) return '';
@@ -120,16 +123,43 @@ function stripImagePart(str) {
   return first.trim();
 }
 
-// CSV テキスト → 「サイト用の下書き質問」配列に変換
-function parseImportedQuestions(csvText) {
+// 末尾に suffix を付ける（すでに付いてたら二重で付けない）
+function appendSuffixOnce(text, suffix) {
+  const t = (text || '').trim();
+  if (!t) return t;
+  if (!suffix) return t;
+  if (t.endsWith(suffix)) return t;
+  return t + suffix;
+}
+
+/**
+ * CSV/TSV テキスト → 「サイト用の下書き質問」配列に変換
+ *
+ * 対応フォーマット：
+ * A) アプリ形式（7列以上）
+ *   questionId,question,answers,wrong,explanation,ordered,generatedWrongChoices
+ *
+ * B) 2列形式（Excel想定）
+ *   question,answer
+ *   または TSV（タブ区切り）もOK
+ */
+function parseImportedQuestions(csvText, opts = {}) {
+  const {
+    addNumericSuffix = false, // 問題文末尾に（数字のみで回答）
+  } = opts;
+
   const lines = splitCsvLines(csvText || '');
   if (!lines.length) return [];
 
+  const delimiter = detectDelimiter(csvText || '');
+
+  // ヘッダ判定（アプリ形式）
   let startIdx = 0;
-  const header = lines[0].toLowerCase();
-  if (header.includes('questionid') && header.includes('question')) {
-    startIdx = 1; // ヘッダーを飛ばす
-  }
+  const headerLower = (lines[0] || '').toLowerCase();
+  const looksLikeAppHeader =
+    headerLower.includes('questionid') && headerLower.includes('question');
+
+  if (looksLikeAppHeader) startIdx = 1;
 
   const imported = [];
 
@@ -137,11 +167,47 @@ function parseImportedQuestions(csvText) {
     const line = lines[i];
     if (!line || !line.trim()) continue;
 
-    const cells = parseCsvLine(line);
-    if (cells.length < 7) {
-      // 足りない分は空文字で埋める
-      while (cells.length < 7) cells.push('');
+    const cells = parseDelimitedLine(line, delimiter).map((c) =>
+      typeof c === 'string' ? c.trim() : c
+    );
+
+    // ──────────────────────────────
+    // B) 2列形式（question,answer）
+    // ──────────────────────────────
+    // 「アプリ形式じゃない」かつ「セル数が 2〜3 程度」なら 2列扱いで読む
+    // ※ セル3は、末尾に余計な列が付くケースの保険（無視）
+    if (!looksLikeAppHeader && cells.length <= 3) {
+      const qRaw = cells[0] ?? '';
+      const aRaw = cells[1] ?? '';
+      const questionText0 = stripImagePart(qRaw);
+      const answerText0 = stripImagePart(aRaw);
+
+      if (!questionText0) continue;
+      if (!answerText0) continue;
+
+      const questionText = addNumericSuffix
+        ? appendSuffixOnce(questionText0, '（数字のみで回答）')
+        : questionText0;
+
+      imported.push({
+        _sourceId: '',
+        _explanation: '',
+        questionType: 'text', // 2列は「記述」として読み込む
+        question: questionText,
+        textAnswer: answerText0.trim(),
+        altTextAnswers: [''],
+        correctChoices: [''],
+        wrongChoices: [''],
+        orderChoices: [''],
+      });
+      continue;
     }
+
+    // ──────────────────────────────
+    // A) アプリ形式（7列以上想定）
+    // ──────────────────────────────
+    // 足りない分は空文字で埋める
+    while (cells.length < 7) cells.push('');
 
     const [
       questionId,
@@ -153,17 +219,21 @@ function parseImportedQuestions(csvText) {
       generatedWrongChoicesRaw,
     ] = cells;
 
-    const questionText = stripImagePart(questionRaw);
-    if (!questionText) continue;
+    const questionText0 = stripImagePart(questionRaw);
+    if (!questionText0) continue;
+
+    const questionText = addNumericSuffix
+      ? appendSuffixOnce(questionText0, '（数字のみで回答）')
+      : questionText0;
 
     const answersText = stripImagePart(answersRaw);
     const wrongText = stripImagePart(wrongRaw);
 
-    const answersList = answersText
+    const answersList = (answersText || '')
       .split(';')
       .map((s) => s.trim())
       .filter(Boolean);
-    const wrongList = wrongText
+    const wrongList = (wrongText || '')
       .split(';')
       .map((s) => s.trim())
       .filter(Boolean);
@@ -204,7 +274,7 @@ function parseImportedQuestions(csvText) {
     };
 
     if (questionType === 'text') {
-      item.textAnswer = answersText.trim();
+      item.textAnswer = (answersText || '').trim();
       item.altTextAnswers = [''];
     } else if (questionType === 'single') {
       item.correctChoices =
@@ -267,11 +337,14 @@ export default function SubmitPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importQueue, setImportQueue] = useState([]); // { questionType, question, ... }[]
-  const [importIndex, setImportIndex] = useState(0); // 次に読み込むインデックス（1-based表示用には +1）
+  const [importIndex, setImportIndex] = useState(0); // 次に読み込むインデックス
   const [importInfo, setImportInfo] = useState('');
 
   // ★ 通常投稿に戻したら「投稿しても自動で次のCSV問題に進まない」ためのフラグ
   const [importAutoFillPaused, setImportAutoFillPaused] = useState(false);
+
+  // ★ 2列CSV用：問題文末尾へ（数字のみで回答）を付ける
+  const [importAddNumericSuffix, setImportAddNumericSuffix] = useState(true);
 
   const toggleCarry = (key) => {
     setCarryConfig((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -571,7 +644,10 @@ export default function SubmitPage() {
   // CSV 読み込み系のハンドラ
   // ──────────────────────────────
   const handleImportAdd = () => {
-    const list = parseImportedQuestions(importText || '');
+    const list = parseImportedQuestions(importText || '', {
+      addNumericSuffix: importAddNumericSuffix,
+    });
+
     if (!list.length) {
       setImportInfo('読み込める問題がありませんでした。');
       return;
@@ -591,7 +667,7 @@ export default function SubmitPage() {
 
     if (importQueue.length === 0) {
       setImportInfo(
-        'ストックが空です。CSVを貼り付けて「ストックに追加」を押してください。'
+        'ストックが空です。CSV/TSVを貼り付けて「ストックに追加」を押してください。'
       );
       return;
     }
@@ -608,17 +684,15 @@ export default function SubmitPage() {
 
   // ★ 1つ前の問題に戻る
   const handleImportPrev = () => {
-    // （戻るのも「読み込み操作」扱いにするなら pause解除してOK。要らなければ消してOK）
     setImportAutoFillPaused(false);
 
     if (importQueue.length === 0) {
       setImportInfo(
-        'ストックが空です。CSVを貼り付けて「ストックに追加」を押してください。'
+        'ストックが空です。CSV/TSVを貼り付けて「ストックに追加」を押してください。'
       );
       return;
     }
     if (importIndex <= 1) {
-      // まだ最初か1問目 → 1問目を表示
       const item = importQueue[0];
       applyImportedQuestion(item);
       setImportIndex(1);
@@ -628,10 +702,10 @@ export default function SubmitPage() {
       return;
     }
 
-    const prevIndex = importIndex - 1; // さっきまでの問題
-    const item = importQueue[prevIndex - 1]; // index-1 が「1つ前」
+    const prevIndex = importIndex - 1;
+    const item = importQueue[prevIndex - 1];
     applyImportedQuestion(item);
-    setImportIndex(prevIndex); // 「読み込み済み = prevIndex 件」
+    setImportIndex(prevIndex);
     setImportInfo(
       `読み込み済み: ${prevIndex} / ${importQueue.length} 問（1つ前の問題に戻りました）`
     );
@@ -639,9 +713,8 @@ export default function SubmitPage() {
 
   // ★ 進捗を保存して通常投稿モードに戻る
   const handleSwitchToNormal = () => {
-    setImportAutoFillPaused(true); // ★ 以降、投稿しても自動で次へ行かない
+    setImportAutoFillPaused(true);
 
-    // importQueue と importIndex はそのまま（進捗は localStorage にも保存される）
     setQuestionType('single');
     setQuestion('');
     setTextAnswer('');
@@ -759,23 +832,39 @@ export default function SubmitPage() {
         {importOpen && (
           <div className="mb-2 text-xs bg-slate-900 border border-emerald-500 rounded-2xl px-3 py-3 space-y-2">
             <div className="font-semibold text-emerald-200 mb-1">
-              CSV から問題を読み込む
+              CSV / TSV から問題を読み込む
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed mb-1">
-              スマホアプリからエクスポートした
-              <span className="text-emerald-300 font-semibold">
-                「questionId,question,answers,...」
+
+            <div className="text-[11px] text-slate-400 leading-relaxed">
+              対応：<span className="text-emerald-200 font-semibold">2列形式</span>
+              （問題,答え） / アプリ形式（questionId,question,answers,...）
+              <br />
+              ※ Excel からコピペしたタブ区切り（TSV）もOK
+            </div>
+
+            <label className="inline-flex items-center gap-2 mt-1 cursor-pointer">
+              <input
+                type="checkbox"
+                className="accent-emerald-400"
+                checked={importAddNumericSuffix}
+                onChange={() => setImportAddNumericSuffix((v) => !v)}
+              />
+              <span className="text-[11px] text-emerald-100">
+                問題文の末尾に「（数字のみで回答）」を付けてストックする
               </span>
-              形式の CSV テキストをそのまま貼り付けてください。画像用の URL（
-              <span className="text-slate-300">http〜</span>
-              ）は自動で無視されます。
-            </p>
+            </label>
+
             <textarea
               className="w-full h-32 px-2 py-1 rounded bg-slate-950 border border-slate-700 font-mono leading-snug text-[16px]"
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              placeholder="ここに CSV テキストを貼り付け..."
+              placeholder={`例（2列）:
+Excelの2列でA列問題、B列答え
+暗記メーカーのcsvエクスポート
+
+TSVもOK（Excelからそのまま貼れる）`}
             />
+
             <div className="flex flex-wrap gap-2 mt-1 items-center">
               <button
                 type="button"
@@ -803,6 +892,7 @@ export default function SubmitPage() {
                 {importIndex + 1}
               </span>
             </div>
+
             <div className="flex flex-wrap gap-2 mt-2">
               <button
                 type="button"
@@ -820,6 +910,7 @@ export default function SubmitPage() {
                 ストックをすべて削除
               </button>
             </div>
+
             {importInfo && (
               <div className="mt-1 text-[11px] text-emerald-200 whitespace-pre-line">
                 {importInfo}

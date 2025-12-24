@@ -15,7 +15,7 @@ export default function SoloMenuPage() {
   // ★ ソロ称号APIを何度も叩かないためのフラグ
   const soloTitlesSentRef = useRef(false);
 
-  // ユーザー情報取得（userId をソロ称号APIに送るため）
+  // ユーザー情報取得（userId をソロ称号APIに送るための）
   useEffect(() => {
     const fetchMe = async () => {
       try {
@@ -215,6 +215,21 @@ export default function SoloMenuPage() {
                 技名のワード当てミニゲーム。
               </p>
             </Link>
+          </div>
+
+          {/* ★ ナンバーゲーム（NEW：ワードルの上） */}
+          <div className="rounded-2xl border border-lime-500 bg-lime-50 px-3 py-3 shadow-sm">
+            <Link
+              href="/solo/number"
+              className="block hover:bg-lime-100 rounded-2xl -mx-3 -my-3 px-3 py-3 transition"
+            >
+              <p className="text-sm font-bold text-lime-900">ナンバーゲーム</p>
+              <p className="text-[11px] text-lime-950 leading-tight mt-1">
+                数字を使ったミニゲーム集。まずは「スピード」を遊べます。
+              </p>
+            </Link>
+            <div className="mt-2 flex items-center justify-end text-[11px] text-lime-900">
+            </div>
           </div>
 
           {/* ★ ワードル（その下） */}
