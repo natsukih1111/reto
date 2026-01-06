@@ -139,7 +139,7 @@ export default function AdminVoiceLearningPage() {
   // 音声設定
   const [speechRate, setSpeechRate] = useState(1.0);
 
-  // ★追加：答えを読むまでの秒数（開始前に設定）
+  // 答えを読むまでの秒数（開始前に設定）
   const [revealSeconds, setRevealSeconds] = useState(5);
 
   // 進行
@@ -158,7 +158,24 @@ export default function AdminVoiceLearningPage() {
   // タイマー管理
   const timersRef = useRef([]);
 
+  // ★ 自動遷移用（クロージャ対策）
+  const runningRef = useRef(false);
+  const idxRef = useRef(0);
+  const deckLenRef = useRef(0);
+
   const current = deck[idx] || null;
+
+  useEffect(() => {
+    runningRef.current = running;
+  }, [running]);
+
+  useEffect(() => {
+    idxRef.current = idx;
+  }, [idx]);
+
+  useEffect(() => {
+    deckLenRef.current = deck.length;
+  }, [deck.length]);
 
   // Web Speech API の対応チェック
   useEffect(() => {
@@ -288,7 +305,25 @@ export default function AdminVoiceLearningPage() {
     setIdx(nextIdx);
   };
 
-  // ★ ここがメイン：形式→問題→（音声回答なら判定読み上げ）→ 指定秒数後に答え読み上げ（必ず）
+  // ★自動遷移（答え読み上げ後1秒）
+  const autoGoNextAfterAnswer = () => {
+    const t = setTimeout(() => {
+      if (!runningRef.current) return;
+      const cur = idxRef.current;
+      const len = deckLenRef.current;
+
+      if (cur + 1 >= len) {
+        setStatusMsg('最後の問題まで完了しました。');
+        setRunning(false);
+        setPhase('idle');
+        return;
+      }
+      setIdx(cur + 1);
+    }, 1000);
+    timersRef.current.push(t);
+  };
+
+  // メイン：形式(短)→問題→（音声回答なら判定音声）→ 指定秒数後に正解読み上げ → 1秒で次へ
   const runSequence = async (q) => {
     if (!q) return;
 
@@ -298,8 +333,8 @@ export default function AdminVoiceLearningPage() {
     const qType = q.question_type || q.type;
     const label = typeLabel(qType);
 
-    // 1) 形式
-    await speakUtterance(`問題形式は、${label}です。`, { rate: speechRate });
+    // 1) 形式：ラベルだけ（「問題形式は…」は言わない）
+    await speakUtterance(label, { rate: speechRate });
 
     // 2) 問題文
     const questionText = String(q.question || '').trim();
@@ -312,23 +347,24 @@ export default function AdminVoiceLearningPage() {
     // 選択肢（単一/複数）
     const opts = Array.isArray(q.options) ? q.options : [];
     if ((qType === 'single' || qType === 'multi') && opts.length > 0) {
-      await speakUtterance('選択肢を読み上げます。', { rate: speechRate });
+      // 「選択肢を読み上げます」→「選択肢」だけ
+      await speakUtterance('選択肢', { rate: speechRate });
       for (let i = 0; i < opts.length; i++) {
         const s = String(opts[i] || '').trim();
         if (!s) continue;
         await speakUtterance(`${i + 1}、${s}`, { rate: speechRate });
-        await sleep(150);
+        await sleep(120);
       }
     }
 
-    // 並び替え
+    // 並び替え：短く「要素」
     if (qType === 'order' && opts.length > 0) {
-      await speakUtterance('並び替える要素を読み上げます。', { rate: speechRate });
+      await speakUtterance('要素', { rate: speechRate });
       for (let i = 0; i < opts.length; i++) {
         const s = String(opts[i] || '').trim();
         if (!s) continue;
         await speakUtterance(`${i + 1}、${s}`, { rate: speechRate });
-        await sleep(150);
+        await sleep(120);
       }
     }
 
@@ -342,40 +378,34 @@ export default function AdminVoiceLearningPage() {
       setStatusMsg(`答え待ち（${Math.max(1, Number(revealSeconds) || 5)}秒）…`);
     }
 
-    // 4) 指定秒数後に答え読み上げ（最後に必ず読む）
+    // 4) 指定秒数後に：正誤を音声（答えるモードのみ）→ 正解読み上げ（別解は読まない）→ 1秒で次へ
     const waitMs = Math.max(1, Number(revealSeconds) || 5) * 1000;
 
     const t = setTimeout(async () => {
-      // ここで止める
       stopRecognition();
       setPhase('revealing');
 
-      // ★ 音声回答モードなら、正誤を音声で言ってから正解も読み上げる（再度）
+      // 音声回答モードなら正誤も読み上げ
       if (learnMode === 'answer') {
         const said = (heard || '').trim();
         const ok = said ? isCorrectAnswer(said, q) : false;
-
         setJudge(ok);
 
         if (!said) {
-          await speakUtterance('回答を認識できませんでした。', { rate: speechRate });
+          await speakUtterance('回答なし', { rate: speechRate });
         } else if (ok) {
-          await speakUtterance('正解です。', { rate: speechRate });
+          await speakUtterance('正解', { rate: speechRate });
         } else {
-          await speakUtterance('不正解です。', { rate: speechRate });
+          await speakUtterance('不正解', { rate: speechRate });
         }
       }
 
+      // 正解：必ず読む（別解は読まない）
       const ans = String(q.correct_answer || '').trim();
-      const alt = Array.isArray(q.alt_answers) ? q.alt_answers : [];
-      const altText = alt.length ? `。別解は、${alt.join('、')}。` : '';
+      await speakUtterance(`正解、${ans || '不明'}`, { rate: speechRate });
 
-      // ★ 正解は必ず読み上げ（音声回答後の“再度読み上げ”もこれで満たす）
-      await speakUtterance(`正解は、${ans || '不明'}です${altText}`, {
-        rate: speechRate,
-      });
-
-      setStatusMsg('次の問題へ進めます');
+      setStatusMsg('1秒後に次の問題へ');
+      autoGoNextAfterAnswer();
     }, waitMs);
 
     timersRef.current.push(t);
@@ -410,7 +440,7 @@ export default function AdminVoiceLearningPage() {
         const shown = (finalText || text || '').trim();
         setHeard(shown);
 
-        // 即時にざっくり判定も更新（画面用）
+        // 画面用の即時判定
         if (shown) setJudge(isCorrectAnswer(shown, q));
       };
 
@@ -441,7 +471,7 @@ export default function AdminVoiceLearningPage() {
     await runSequence(d[0]);
   };
 
-  // idx が変わったら、実行中なら自動で次へ
+  // idx が変わったら、実行中なら自動で次へ読み上げ
   useEffect(() => {
     if (!running) return;
     if (!current) return;
@@ -609,9 +639,6 @@ export default function AdminVoiceLearningPage() {
               disabled={running}
               className="w-full px-2 py-2 rounded bg-slate-800 border border-slate-600 text-slate-50"
             />
-            <div className="text-[10px] text-slate-400">
-              ※ 問題文を読み終わってからこの秒数で答えを読み上げます
-            </div>
           </label>
 
           <label className="space-y-1">
@@ -700,16 +727,6 @@ export default function AdminVoiceLearningPage() {
                 {' '}
                 {typeLabel(current.question_type || current.type)}
               </span>
-              {Array.isArray(current.tags) && current.tags.length > 0 && (
-                <>
-                  {' '}
-                  / タグ：
-                  <span className="text-slate-50 font-bold">
-                    {' '}
-                    {current.tags.join('、')}
-                  </span>
-                </>
-              )}
             </div>
 
             <div className="text-sm text-slate-50 whitespace-pre-wrap leading-relaxed">
@@ -733,7 +750,7 @@ export default function AdminVoiceLearningPage() {
               正解：{current.correct_answer}
               {Array.isArray(current.alt_answers) &&
                 current.alt_answers.length > 0 && (
-                  <span> / 別解：{current.alt_answers.join('、')}</span>
+                  <span className="text-slate-400">（別解あり）</span>
                 )}
             </div>
 
@@ -765,9 +782,6 @@ export default function AdminVoiceLearningPage() {
                       （発話すると判定します）
                     </span>
                   )}
-                </div>
-                <div className="text-[10px] text-slate-400">
-                  ※ 音声認識は端末・環境で誤差があります（別解に入れると強くなります）
                 </div>
               </div>
             )}
