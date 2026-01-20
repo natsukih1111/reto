@@ -61,37 +61,6 @@ function manhattan(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function buildYearMap(list) {
-  const m = new Map(); // yearsAgo -> [{event, yearsAgo}, ...]
-  for (const it of list || []) {
-    const y = Number(it.yearsAgo);
-    if (!Number.isFinite(y)) continue;
-    const e = String(it.event || '').trim();
-    if (!e) continue;
-    if (!m.has(y)) m.set(y, []);
-    m.get(y).push({ event: e, yearsAgo: y });
-  }
-  return m;
-}
-
-// 「時系列が近いN個」：yearsAgo の連続ウィンドウから抽出（同yearsは同waveで出ない）
-function pickWaveNearN(list, n, rng = Math.random) {
-  const yearMap = buildYearMap(list);
-  const years = Array.from(yearMap.keys()).sort((a, b) => a - b); // 小=新しい → 大=古い
-  if (years.length === 0) return [];
-
-  const want = Math.min(n, years.length);
-  const maxStart = Math.max(0, years.length - want);
-  const start = Math.floor(rng() * (maxStart + 1));
-  const windowYears = years.slice(start, start + want);
-
-  return windowYears.map((y) => {
-    const arr = yearMap.get(y) || [];
-    const idx = Math.floor(rng() * arr.length);
-    return arr[idx] || { event: String(y), yearsAgo: y };
-  });
-}
-
 function dirToVec(dir) {
   if (dir === 'UP') return { dx: 0, dy: -1 };
   if (dir === 'DOWN') return { dx: 0, dy: 1 };
@@ -123,6 +92,124 @@ function choicesFrom(pos) {
   return dirs.filter((d) => canMove(pos, d));
 }
 
+function findLookaheadTarget(p, tiles = 4) {
+  // プレイヤーの進行方向の先を狙う（壁なら手前で止める）
+  const v = dirToVec(p.dir);
+  let tx = p.x;
+  let ty = p.y;
+
+  for (let i = 0; i < tiles; i++) {
+    const nx = tx + v.dx;
+    const ny = ty + v.dy;
+    if (isWall(nx, ny)) break;
+    tx = nx;
+    ty = ny;
+  }
+  return { x: tx, y: ty };
+}
+
+function chooseDirTowardTarget(g, target, opts) {
+  if (!target || !opts || opts.length === 0) return g.dir || opts[0];
+
+  const opp = oppositeDir(g.dir);
+  const filtered = opts.filter((d) => d !== opp);
+  const usable = filtered.length ? filtered : opts;
+
+  let best = usable[0];
+  let bestScore = Infinity;
+
+  for (const d of usable) {
+    const n = nextCell(g, d);
+    const sc = manhattan(n, target);
+    if (sc < bestScore) {
+      bestScore = sc;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function inRect(x, y, rect) {
+  if (!rect) return true;
+  return x >= rect.x0 && x <= rect.x1 && y >= rect.y0 && y <= rect.y1;
+}
+
+// ===== 壁じゃないスポーン地点を4つ確保する =====
+function findSpawnPoints4() {
+  const cx = Math.floor(COLS / 2);
+  const cy = Math.floor(ROWS / 2);
+
+  // 中心からの距離が近い順に通路セルを集める
+  const cells = [];
+  for (let y = 1; y < ROWS - 1; y++) {
+    for (let x = 1; x < COLS - 1; x++) {
+      if (isWall(x, y)) continue;
+      cells.push({ x, y, d: Math.abs(x - cx) + Math.abs(y - cy) });
+    }
+  }
+  cells.sort((a, b) => a.d - b.d);
+
+  // なるべく近いけど、同じ場所にならない4つ
+  const picked = [];
+  for (const c of cells) {
+    if (picked.length >= 4) break;
+    if (!picked.some((p) => p.x === c.x && p.y === c.y)) picked.push({ x: c.x, y: c.y });
+  }
+
+  // 念のため足りなかったら (1,1) 周辺も含めて埋める
+  if (picked.length < 4) {
+    const fallback = [
+      { x: 1, y: 1 },
+      { x: 2, y: 1 },
+      { x: 1, y: 2 },
+      { x: 2, y: 2 },
+      { x: 3, y: 1 },
+      { x: 1, y: 3 },
+    ].filter((p) => !isWall(p.x, p.y));
+
+    for (const f of fallback) {
+      if (picked.length >= 4) break;
+      if (!picked.some((p) => p.x === f.x && p.y === f.y)) picked.push(f);
+    }
+  }
+
+  // 最終保証（同じ場所でもいいから4つ）
+  while (picked.length < 4) picked.push({ x: 1, y: 1 });
+
+  return picked.slice(0, 4);
+}
+
+function buildYearMap(list) {
+  const m = new Map(); // yearsAgo -> [{event, yearsAgo}, ...]
+  for (const it of list || []) {
+    const y = Number(it.yearsAgo);
+    if (!Number.isFinite(y)) continue;
+    const e = String(it.event || '').trim();
+    if (!e) continue;
+    if (!m.has(y)) m.set(y, []);
+    m.get(y).push({ event: e, yearsAgo: y });
+  }
+  return m;
+}
+
+// 「時系列が近いN個」：yearsAgo の連続ウィンドウから抽出（同yearsは同waveで出ない）
+function pickWaveNearN(list, n, rng = Math.random) {
+  const yearMap = buildYearMap(list);
+  const years = Array.from(yearMap.keys()).sort((a, b) => a - b); // 小=新しい → 大=古い
+  if (years.length === 0) return [];
+
+  const want = Math.min(n, years.length);
+  const maxStart = Math.max(0, years.length - want);
+  const start = Math.floor(rng() * (maxStart + 1));
+  const windowYears = years.slice(start, start + want);
+
+  return windowYears.map((y) => {
+    const arr = yearMap.get(y) || [];
+    const idx = Math.floor(rng() * arr.length);
+    return arr[idx] || { event: String(y), yearsAgo: y };
+  });
+}
+
 function SoloLayout({ title, children }) {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-slate-100 text-slate-900">
@@ -141,8 +228,6 @@ function SoloLayout({ title, children }) {
 
 function formatStartYears(mode, wave) {
   if (!mode || !wave || wave.length === 0) return null;
-  // OLD: yearsAgo 大きい→小さい（最初=最大）
-  // NEW: yearsAgo 小さい→大きい（最初=最小）
   let v = wave[0]?.yearsAgo;
   for (const it of wave) {
     if (mode === 'OLD') v = Math.max(v, it.yearsAgo);
@@ -187,14 +272,12 @@ function bfsReachable(start, goal, blockedSet) {
 
 // ====== 「順番通りに、残りエサを踏まずに到達できる」配置になるまで引き直す ======
 function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
-  // orderCells: [{id, yearsAgo, ...}] を置くためのセル配列を作る
   const maxTry = 2200;
 
   for (let attempt = 0; attempt < maxTry; attempt++) {
     const cells = [];
     const localForbid = new Set(forbiddenSet);
 
-    // ランダムにセルを選ぶ
     let guard = 0;
     while (cells.length < count && guard < 12000) {
       guard++;
@@ -206,7 +289,6 @@ function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
       const key = `${x},${y}`;
       if (localForbid.has(key)) continue;
 
-      // 行き止まりっぽい所は避ける（詰みやすい）
       const n =
         (isWall(x + 1, y) ? 1 : 0) +
         (isWall(x - 1, y) ? 1 : 0) +
@@ -220,23 +302,19 @@ function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
 
     if (cells.length < count) continue;
 
-    // cells を orderCells と同じ順番で割り当てる
     const placed = orderCells.map((it, idx) => ({ ...it, x: cells[idx].x, y: cells[idx].y }));
 
-    // 検証：順番通りに、残りエサセルを壁として扱って到達できるか
     let ok = true;
     let curPos = { ...startPos };
 
     for (let i = 0; i < placed.length; i++) {
       const target = placed[i];
 
-      // まだ取ってないエサ（target以外）は踏めない＝ブロック
       const blocked = new Set();
       for (let j = i + 1; j < placed.length; j++) {
         blocked.add(`${placed[j].x},${placed[j].y}`);
       }
 
-      // 現在地がブロックに入ってたらアウト（基本起きない）
       if (blocked.has(`${curPos.x},${curPos.y}`)) {
         ok = false;
         break;
@@ -255,7 +333,7 @@ function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
     }
   }
 
-  // 最悪、検証なしの簡易版（ここに来ることは基本ない想定）
+  // fallback
   const cellsFallback = [];
   const localForbid = new Set(forbiddenSet);
   while (cellsFallback.length < count) {
@@ -293,7 +371,6 @@ export default function BeforePacmanPage() {
 
   const [answerHistory, setAnswerHistory] = useState([]);
 
-  // ★gameOver時に最新を参照するref
   const waveRef = useRef([]);
   useEffect(() => {
     waveRef.current = wave;
@@ -309,7 +386,6 @@ export default function BeforePacmanPage() {
     expectedIndexRef.current = expectedIndex;
   }, [expectedIndex]);
 
-  // ★二重登録防止：食べたエサのID
   const eatenIdsRef = useRef(new Set());
 
   // 盤サイズ
@@ -334,6 +410,8 @@ export default function BeforePacmanPage() {
     return clamp(s, 14, 26);
   }, [boardRect.w, boardRect.h]);
 
+  const pelletLabelFont = useMemo(() => clamp(Math.floor(tilePx * 0.33), 8, 11), [tilePx]);
+
   const boardW = tilePx * COLS;
   const boardH = tilePx * ROWS;
 
@@ -353,15 +431,13 @@ export default function BeforePacmanPage() {
   const ordered = useMemo(() => {
     const arr = [...(wave || [])];
     if (!mode) return arr;
-    if (mode === 'OLD') return arr.sort((a, b) => b.yearsAgo - a.yearsAgo); // 古い順
-    return arr.sort((a, b) => a.yearsAgo - b.yearsAgo); // 新しい順
+    if (mode === 'OLD') return arr.sort((a, b) => b.yearsAgo - a.yearsAgo);
+    return arr.sort((a, b) => a.yearsAgo - b.yearsAgo);
   }, [wave, mode]);
 
   const expected = ordered[expectedIndex] || null;
 
-  const startYears = useMemo(() => {
-    return formatStartYears(mode, wave);
-  }, [mode, wave]);
+  const startYears = useMemo(() => formatStartYears(mode, wave), [mode, wave]);
 
   const compactLegend = useMemo(() => {
     const arr = [...(wave || [])].sort((a, b) => (a.letter < b.letter ? -1 : 1));
@@ -370,7 +446,7 @@ export default function BeforePacmanPage() {
     return { left, right };
   }, [wave]);
 
-  // ===== 初期化（best読み込み + データ取得）=====
+  // ===== 初期化 =====
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -397,17 +473,45 @@ export default function BeforePacmanPage() {
     load();
   }, []);
 
+  // ===== ゴースト初期化：壁セルを避けて4体必ず出す =====
   const resetActors = () => {
     setPlayer({ x: 1, y: 1, dir: 'RIGHT', nextDir: 'RIGHT' });
+
+    const sp = findSpawnPoints4();
     const cx = Math.floor(COLS / 2);
     const cy = Math.floor(ROWS / 2);
 
+    // 巡回（縄張り）エリア：中心付近の矩形
+    const patrolRect = {
+      x0: clamp(cx - 5, 1, COLS - 2),
+      x1: clamp(cx + 5, 1, COLS - 2),
+      y0: clamp(cy - 4, 1, ROWS - 2),
+      y1: clamp(cy + 4, 1, ROWS - 2),
+    };
+
+    const patrolPoints = [
+      { x: patrolRect.x0, y: patrolRect.y0 },
+      { x: patrolRect.x1, y: patrolRect.y0 },
+      { x: patrolRect.x1, y: patrolRect.y1 },
+      { x: patrolRect.x0, y: patrolRect.y1 },
+    ].filter((pt) => !isWall(pt.x, pt.y));
+
+    // 4体を必ず別セルへ
     const gs = [
-      { id: 'g1', x: cx, y: cy, dir: 'LEFT', kind: 'chase' },
-      { id: 'g2', x: cx - 1, y: cy, dir: 'RIGHT', kind: 'random' },
-      { id: 'g3', x: cx + 1, y: cy, dir: 'UP', kind: 'random' },
-      { id: 'g4', x: cx, y: cy + 1, dir: 'DOWN', kind: 'random' },
-    ].filter((g) => !isWall(g.x, g.y));
+      { id: 'g_red', x: sp[0].x, y: sp[0].y, dir: 'LEFT', kind: 'chase' },
+      {
+        id: 'g_yellow',
+        x: sp[1].x,
+        y: sp[1].y,
+        dir: 'RIGHT',
+        kind: 'patrol',
+        patrolRect,
+        patrolPoints,
+        patrolIndex: 0,
+      },
+      { id: 'g_pink', x: sp[2].x, y: sp[2].y, dir: 'UP', kind: 'random' },
+      { id: 'g_green', x: sp[3].x, y: sp[3].y, dir: 'DOWN', kind: 'ambush' },
+    ];
 
     setGhosts(gs);
   };
@@ -415,33 +519,27 @@ export default function BeforePacmanPage() {
   const makeWave = (m) => {
     const picked = pickWaveNearN(rawList, PELLET_COUNT);
 
-    // 付番
     const base = picked.map((it, idx) => {
       const letter = LETTERS[idx] || '?';
       const id = `p_${it.yearsAgo}_${idx}_${Math.random().toString(16).slice(2)}`;
       return { ...it, letter, id };
     });
 
-    // 「答える順」基準で検証したいので並びを作る
     const orderForCheck = [...base].sort((a, b) => {
-      if (m === 'OLD') return b.yearsAgo - a.yearsAgo; // 古い→新しい
-      return a.yearsAgo - b.yearsAgo; // 新しい→古い
+      if (m === 'OLD') return b.yearsAgo - a.yearsAgo;
+      return a.yearsAgo - b.yearsAgo;
     });
 
     const forbidden = new Set();
     forbidden.add('1,1'); // player start
-    const cx = Math.floor(COLS / 2);
-    const cy = Math.floor(ROWS / 2);
-    forbidden.add(`${cx},${cy}`);
-    forbidden.add(`${cx - 1},${cy}`);
-    forbidden.add(`${cx + 1},${cy}`);
-    forbidden.add(`${cx},${cy + 1}`);
 
-    // ★重要：検証付き配置（Aを取るのにBを踏まないといけない…を排除）
+    // ゴーストのスポーンも避ける（詰み防止）
+    const sp = findSpawnPoints4();
+    for (const p of sp) forbidden.add(`${p.x},${p.y}`);
+
     const startPos = { x: 1, y: 1 };
     const cells = pickEmptyCellsValidated(orderForCheck.length, forbidden, orderForCheck, startPos);
 
-    // cells は orderForCheck 順に対応してるので、元baseへ位置を反映
     const posById = new Map();
     for (let i = 0; i < orderForCheck.length; i++) {
       posById.set(orderForCheck[i].id, cells[i]);
@@ -452,15 +550,14 @@ export default function BeforePacmanPage() {
       return { ...it, x: c.x, y: c.y };
     });
 
-    eatenIdsRef.current = new Set(); // ★二重登録防止をリセット
+    eatenIdsRef.current = new Set();
     setWave(wave2);
     setExpectedIndex(0);
   };
 
-  // ===== WAVE開始（choose -> preview -> playing）=====
   const startWaveWithMode = (m) => {
     setMode(m);
-    modeRef.current = m; // 念のため
+    modeRef.current = m;
     setMessage('');
     resetActors();
     makeWave(m);
@@ -621,7 +718,6 @@ export default function BeforePacmanPage() {
       const seen = new Set(prev.map((x) => x.question_id));
       const added = [];
 
-      // ミス表示（順番ミス時のみ）
       if (wrongPellet && expectedNow) {
         const qid = `before_${wrongPellet.id}_mistake`;
         if (!seen.has(qid)) {
@@ -635,7 +731,6 @@ export default function BeforePacmanPage() {
         }
       }
 
-      // 残り問題（未回答）を全部
       const wrongId = wrongPellet?.id || null;
       for (const q of remaining) {
         if (wrongId && q.id === wrongId) continue;
@@ -654,7 +749,7 @@ export default function BeforePacmanPage() {
     });
   };
 
-  // ===== メインループ（preview中は動かさない）=====
+  // ===== メインループ =====
   const rafRef = useRef(null);
   const lastRef = useRef(nowMs());
   const accRef = useRef({ p: 0, g: 0 });
@@ -696,48 +791,75 @@ export default function BeforePacmanPage() {
         accRef.current.g -= GHOST_STEP_MS;
 
         setGhosts((gs0) => {
-          const p = playerRef.current;
-
           const gs1 = (gs0 || []).map((g0) => {
             let g = { ...g0 };
-            const opts = choicesFrom(g);
+            const p = playerRef.current;
+
+            let opts = choicesFrom(g);
             if (opts.length === 0) return g;
 
             const atJunction = opts.length >= 3 || !canMove(g, g.dir);
 
             if (atJunction) {
-              const opp = oppositeDir(g.dir);
-              const filtered = opts.filter((d) => d !== opp);
-              const usable = filtered.length ? filtered : opts;
+              if (g.kind === 'patrol') {
+                const rect = g.patrolRect;
+                const points = Array.isArray(g.patrolPoints) ? g.patrolPoints : [];
+                let idx = Number.isFinite(g.patrolIndex) ? g.patrolIndex : 0;
 
-              if (g.kind === 'chase' && Math.random() < 0.72) {
-                let best = usable[0];
-                let bestScore = Infinity;
-                for (const d of usable) {
-                  const n = nextCell(g, d);
-                  const sc = manhattan(n, p);
-                  if (sc < bestScore) {
-                    bestScore = sc;
-                    best = d;
+                if (!inRect(g.x, g.y, rect)) {
+                  let bestI = 0;
+                  let bestD = Infinity;
+                  for (let i = 0; i < points.length; i++) {
+                    const d = manhattan({ x: g.x, y: g.y }, points[i]);
+                    if (d < bestD) {
+                      bestD = d;
+                      bestI = i;
+                    }
                   }
+                  idx = bestI;
                 }
-                g.dir = best;
+
+                const target = points[idx] || { x: g.x, y: g.y };
+                if (g.x === target.x && g.y === target.y && points.length > 0) {
+                  idx = (idx + 1) % points.length;
+                }
+
+                const nextTarget = points[idx] || target;
+
+                opts = opts.filter((d) => {
+                  const n = nextCell(g, d);
+                  return inRect(n.x, n.y, rect);
+                });
+                if (opts.length === 0) opts = choicesFrom(g);
+
+                g.dir = chooseDirTowardTarget(g, nextTarget, opts);
+                g.patrolIndex = idx;
+              } else if (g.kind === 'ambush') {
+                const target = findLookaheadTarget(p, 4);
+                g.dir = chooseDirTowardTarget(g, target, opts);
+              } else if (g.kind === 'chase') {
+                g.dir = chooseDirTowardTarget(g, { x: p.x, y: p.y }, opts);
               } else {
+                const opp = oppositeDir(g.dir);
+                const filtered = opts.filter((d) => d !== opp);
+                const usable = filtered.length ? filtered : opts;
                 g.dir = usable[Math.floor(Math.random() * usable.length)];
               }
             }
 
-            if (canMove(g, g.dir)) {
+            if (g.dir && canMove(g, g.dir)) {
               const n = nextCell(g, g.dir);
               g.x = n.x;
               g.y = n.y;
             } else {
-              const usable = opts;
-              g.dir = usable[Math.floor(Math.random() * usable.length)];
-              const n = nextCell(g, g.dir);
-              if (!isWall(n.x, n.y)) {
-                g.x = n.x;
-                g.y = n.y;
+              const usable = choicesFrom(g);
+              if (usable.length) {
+                g.dir = usable[Math.floor(Math.random() * usable.length)];
+                const n = nextCell(g, g.dir);
+                if (!isWall(n.x, n.y)) {
+                  g.x = n.x;
+                  g.y = n.y;
+                }
               }
             }
 
@@ -766,15 +888,12 @@ export default function BeforePacmanPage() {
         if (currentExpected) {
           const pelletHere = (wave || []).find((q) => q.x === p.x && q.y === p.y);
           if (pelletHere) {
-            // ★同一エサの二重処理防止
             if (eatenIdsRef.current.has(pelletHere.id)) {
               rafRef.current = requestAnimationFrame(loop);
               return;
             }
 
-            // 順番ミス
             if (pelletHere.id !== currentExpected.id) {
-              // ミスも二重発火防止
               eatenIdsRef.current.add(pelletHere.id);
               gameOver({ reason: '順番ミス', wrongPellet: pelletHere });
               return;
@@ -784,7 +903,6 @@ export default function BeforePacmanPage() {
 
             setWave((prev) => prev.filter((q) => q.id !== pelletHere.id));
 
-            // ★順番OKも「何年前」を不備報告で見れるようにする
             setAnswerHistory((prev) => {
               const qid = `before_${pelletHere.id}`;
               if (prev.some((x) => x.question_id === qid)) return prev;
@@ -810,7 +928,7 @@ export default function BeforePacmanPage() {
         }
       }
 
-      // 5個食べたら次WAVE（次も10秒確認するため chooseへ）
+      // 5個食べたら次WAVE
       {
         const w = wave || [];
         if (mode && w.length === 0) {
@@ -828,7 +946,7 @@ export default function BeforePacmanPage() {
       rafRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, mode, expectedIndex, wave]);
+  }, [status, mode, expectedIndex, wave, expected]);
 
   // ===== UI =====
   if (status === 'loading') {
@@ -911,9 +1029,7 @@ export default function BeforePacmanPage() {
                 新しい順
               </button>
             </div>
-            <p className="mt-3 text-xs text-slate-600">
-              次：10秒だけ問題を表示してからスタート（最初に考える時間）
-            </p>
+            <p className="mt-3 text-xs text-slate-600">次：10秒だけ問題を表示してからスタート（最初に考える時間）</p>
           </div>
 
           <div className="text-center">
@@ -926,7 +1042,7 @@ export default function BeforePacmanPage() {
     );
   }
 
-  // ===== preview / playing 共通の上部HUD（盤面に被せない） =====
+  // ===== preview / playing 共通の上部HUD（答えバレ無し） =====
   const LegendBox = (
     <div className="bg-white/92 rounded-2xl border border-slate-200 shadow-sm p-3">
       <div className="flex items-start justify-between gap-3">
@@ -935,15 +1051,6 @@ export default function BeforePacmanPage() {
             順： <span className="font-bold text-slate-900">{mode === 'OLD' ? '古い順' : '新しい順'}</span>
             {Number.isFinite(startYears) && (
               <span className="ml-2 text-slate-700 font-semibold">（{startYears}年前スタート）</span>
-            )}
-          </p>
-
-          <p className="mt-1 text-sm text-slate-900">
-            次に食べる：{' '}
-            {expected ? (
-              <span className="font-black text-slate-900">{expected.letter}</span>
-            ) : (
-              <span className="text-slate-600">…</span>
             )}
           </p>
           <p className="mt-1 text-[10px] text-slate-600">※次のエサは赤く光りません</p>
@@ -995,6 +1102,213 @@ export default function BeforePacmanPage() {
     </div>
   );
 
+  // ===== A〜Eの丸の近くに薄い問題文（event） =====
+  const PelletAndLabel = ({ q }) => (
+    <div className="absolute" style={{ left: q.x * tilePx, top: q.y * tilePx, zIndex: 10 }}>
+      <div
+        className="absolute flex items-center justify-center font-black"
+        style={{
+          left: Math.floor(tilePx * 0.15),
+          top: Math.floor(tilePx * 0.15),
+          width: Math.floor(tilePx * 0.7),
+          height: Math.floor(tilePx * 0.7),
+          borderRadius: 999,
+          background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
+          color: 'rgba(2,6,23,0.95)',
+          boxShadow: '0 4px 10px rgba(0,0,0,0.25), inset 0 0 0 2px rgba(255,255,255,0.22)',
+          fontSize: Math.max(11, Math.floor(tilePx * 0.48)),
+        }}
+        title={`${q.letter}: ${q.event}`}
+      >
+        {q.letter}
+      </div>
+
+      <div
+        className="absolute whitespace-nowrap pointer-events-none"
+        style={{
+          left: Math.floor(tilePx * 0.05),
+          top: Math.floor(tilePx * 0.92),
+          maxWidth: tilePx * 3.8,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          fontSize: pelletLabelFont,
+          lineHeight: 1.05,
+          color: 'rgba(255,255,255,0.65)',
+          background: 'rgba(0,0,0,0.18)',
+          padding: '1px 4px',
+          borderRadius: 999,
+          backdropFilter: 'blur(2px)',
+        }}
+      >
+        {q.event}
+      </div>
+    </div>
+  );
+
+  const GhostSprite = ({ g }) => {
+  const body =
+    g.id === 'g_red'
+      ? '#ff4d4d'
+      : g.id === 'g_yellow'
+        ? '#ffd400'
+        : g.id === 'g_pink'
+          ? '#ff66cc'
+          : '#33dd77';
+
+  // ドットの大きさ（タイルに合わせて自動で調整）
+  const px = Math.max(2, Math.floor(tilePx / 8)); // 例: tilePx 16〜26 → px 2〜3
+  const w = px * 8;
+  const h = px * 8;
+
+  // 8x8 ドット（1=塗る, 0=透明）
+  // かわいいゴースト（頭丸＋下ギザ）
+  const ghostBits = [
+    '00111100',
+    '01111110',
+    '11111111',
+    '11011011',
+    '11111111',
+    '11111111',
+    '11011011',
+    '10100101',
+  ];
+
+  // 目（白）を上から被せる
+  const eyeBits = [
+    '00000000',
+    '00000000',
+    '00000000',
+    '00100100',
+    '00100100',
+    '00000000',
+    '00000000',
+    '00000000',
+  ];
+
+  // 黒目（ちょいズラして可愛く）
+  const pupilBits = [
+    '00000000',
+    '00000000',
+    '00000000',
+    '00010000',
+    '00010000',
+    '00000000',
+    '00000000',
+    '00000000',
+  ];
+
+  const renderBits = (bits, color, opacity = 1) =>
+    bits.flatMap((row, yy) =>
+      row.split('').map((c, xx) => {
+        if (c !== '1') return null;
+        return (
+          <div
+            key={`${yy}-${xx}-${color}`}
+            style={{
+              position: 'absolute',
+              left: xx * px,
+              top: yy * px,
+              width: px,
+              height: px,
+              background: color,
+              opacity,
+            }}
+          />
+        );
+      })
+    );
+
+  return (
+    <div
+      className="absolute"
+      style={{
+        left: g.x * tilePx + Math.floor((tilePx - w) / 2),
+        top: g.y * tilePx + Math.floor((tilePx - h) / 2),
+        width: w,
+        height: h,
+        zIndex: 11,
+        imageRendering: 'pixelated',
+      }}
+      title="ghost"
+    >
+      {/* 影 */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          filter: 'drop-shadow(0 6px 8px rgba(0,0,0,0.45))',
+        }}
+      >
+        <div style={{ position: 'absolute', inset: 0 }}>{renderBits(ghostBits, body)}</div>
+      </div>
+
+      {/* 目 */}
+      <div style={{ position: 'absolute', inset: 0 }}>{renderBits(eyeBits, 'white', 0.95)}</div>
+      <div style={{ position: 'absolute', inset: 0 }}>{renderBits(pupilBits, '#111', 0.9)}</div>
+    </div>
+  );
+};
+
+
+  const Board = ({ dim }) => (
+    <div
+      ref={boardRef}
+      className="relative rounded-2xl overflow-hidden border border-slate-500 shadow-lg bg-slate-950"
+      style={{
+        width: '100%',
+        maxWidth: 520,
+        aspectRatio: `${COLS}/${ROWS}`,
+        touchAction: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
+      }}
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          width: boardW,
+          height: boardH,
+          transformOrigin: 'top left',
+        }}
+      >
+        {MAZE.map((row, y) =>
+          row.split('').map((c, x) => {
+            const wall = c === '1';
+            return (
+              <div
+                key={`${x},${y}`}
+                className="absolute"
+                style={{
+                  left: x * tilePx,
+                  top: y * tilePx,
+                  width: tilePx,
+                  height: tilePx,
+                  background: wall
+                    ? 'linear-gradient(180deg, rgba(30,41,59,1), rgba(15,23,42,1))'
+                    : 'rgba(2,6,23,1)',
+                  boxShadow: wall
+                    ? 'inset 0 0 0 1px rgba(255,255,255,0.06)'
+                    : 'inset 0 0 0 1px rgba(255,255,255,0.02)',
+                }}
+              />
+            );
+          })
+        )}
+
+        {(wave || []).map((q) => (
+          <PelletAndLabel key={q.id} q={q} />
+        ))}
+
+        
+        {(ghosts || []).map((g) => (
+          <GhostSprite key={g.id} g={g} />
+        ))}
+      </div>
+
+      {dim && <div className="absolute inset-0" style={{ background: 'rgba(2,6,23,0.15)', zIndex: 30 }} />}
+    </div>
+  );
+
   // ===== preview =====
   if (status === 'preview') {
     return (
@@ -1014,136 +1328,9 @@ export default function BeforePacmanPage() {
           <div className="mt-2">{LegendBox}</div>
 
           <div className="mt-3 flex flex-col items-center gap-2">
-            <div
-              ref={boardRef}
-              className="relative rounded-2xl overflow-hidden border border-slate-500 shadow-lg bg-slate-950"
-              style={{
-                width: '100%',
-                maxWidth: 520,
-                aspectRatio: `${COLS}/${ROWS}`,
-                touchAction: 'none',
-                WebkitUserSelect: 'none',
-                userSelect: 'none',
-              }}
-            >
-              <div
-                className="absolute inset-0"
-                style={{
-                  width: boardW,
-                  height: boardH,
-                  transformOrigin: 'top left',
-                }}
-              >
-                {MAZE.map((row, y) =>
-                  row.split('').map((c, x) => {
-                    const wall = c === '1';
-                    return (
-                      <div
-                        key={`${x},${y}`}
-                        className="absolute"
-                        style={{
-                          left: x * tilePx,
-                          top: y * tilePx,
-                          width: tilePx,
-                          height: tilePx,
-                          background: wall
-                            ? 'linear-gradient(180deg, rgba(30,41,59,1), rgba(15,23,42,1))'
-                            : 'rgba(2,6,23,1)',
-                          boxShadow: wall
-                            ? 'inset 0 0 0 1px rgba(255,255,255,0.06)'
-                            : 'inset 0 0 0 1px rgba(255,255,255,0.02)',
-                        }}
-                      />
-                    );
-                  })
-                )}
+            <Board dim />
 
-                {(wave || []).map((q) => (
-                  <div
-                    key={q.id}
-                    className="absolute flex items-center justify-center font-black"
-                    style={{
-                      left: q.x * tilePx + Math.floor(tilePx * 0.15),
-                      top: q.y * tilePx + Math.floor(tilePx * 0.15),
-                      width: Math.floor(tilePx * 0.7),
-                      height: Math.floor(tilePx * 0.7),
-                      borderRadius: 999,
-                      background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
-                      color: 'rgba(2,6,23,0.95)',
-                      boxShadow: '0 4px 10px rgba(0,0,0,0.25), inset 0 0 0 2px rgba(255,255,255,0.22)',
-                      fontSize: Math.max(11, Math.floor(tilePx * 0.48)),
-                      zIndex: 10,
-                    }}
-                    title={`${q.letter}: ${q.event}`}
-                  >
-                    {q.letter}
-                  </div>
-                ))}
-
-                <div
-                  className="absolute"
-                  style={{
-                    left: player.x * tilePx,
-                    top: player.y * tilePx,
-                    width: tilePx,
-                    height: tilePx,
-                    zIndex: 12,
-                    opacity: 0.9,
-                  }}
-                >
-                  <div
-                    className="w-full h-full rounded-full"
-                    style={{
-                      background:
-                        'radial-gradient(circle at 30% 30%, rgba(253,230,138,1), rgba(245,158,11,1))',
-                      boxShadow: '0 6px 12px rgba(0,0,0,0.35), inset 0 0 0 2px rgba(255,255,255,0.20)',
-                    }}
-                  />
-                </div>
-
-                {(ghosts || []).map((g) => {
-                  const color =
-                    g.id === 'g1'
-                      ? 'linear-gradient(180deg, rgba(248,113,113,1), rgba(220,38,38,1))'
-                      : g.id === 'g2'
-                        ? 'linear-gradient(180deg, rgba(167,139,250,1), rgba(124,58,237,1))'
-                        : g.id === 'g3'
-                          ? 'linear-gradient(180deg, rgba(96,165,250,1), rgba(37,99,235,1))'
-                          : 'linear-gradient(180deg, rgba(251,146,60,1), rgba(234,88,12,1))';
-
-                  return (
-                    <div
-                      key={g.id}
-                      className="absolute"
-                      style={{
-                        left: g.x * tilePx,
-                        top: g.y * tilePx,
-                        width: tilePx,
-                        height: tilePx,
-                        zIndex: 11,
-                        opacity: 0.9,
-                      }}
-                      title="ghost"
-                    >
-                      <div
-                        className="w-full h-full"
-                        style={{
-                          borderRadius: Math.floor(tilePx * 0.35),
-                          background: color,
-                          boxShadow: '0 6px 12px rgba(0,0,0,0.35), inset 0 0 0 2px rgba(255,255,255,0.18)',
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="absolute inset-0" style={{ background: 'rgba(2,6,23,0.15)', zIndex: 30 }} />
-            </div>
-
-            <div className="text-[11px] text-slate-700 text-center">
-              いまは準備時間（操作できません）／ 10秒後に自動で開始
-            </div>
+            <div className="text-[11px] text-slate-700 text-center">いまは準備時間（操作できません）／ 10秒後に自動で開始</div>
 
             <div className="text-center">
               <Link href="/" className="text-xs text-sky-700 hover:underline">
@@ -1174,127 +1361,7 @@ export default function BeforePacmanPage() {
         <div className="mt-2">{LegendBox}</div>
 
         <div className="mt-3 flex flex-col items-center gap-2">
-          <div
-            ref={boardRef}
-            className="relative rounded-2xl overflow-hidden border border-slate-500 shadow-lg bg-slate-950"
-            style={{
-              width: '100%',
-              maxWidth: 520,
-              aspectRatio: `${COLS}/${ROWS}`,
-              touchAction: 'none',
-              WebkitUserSelect: 'none',
-              userSelect: 'none',
-            }}
-          >
-            <div
-              className="absolute inset-0"
-              style={{
-                width: boardW,
-                height: boardH,
-                transformOrigin: 'top left',
-              }}
-            >
-              {MAZE.map((row, y) =>
-                row.split('').map((c, x) => {
-                  const wall = c === '1';
-                  return (
-                    <div
-                      key={`${x},${y}`}
-                      className="absolute"
-                      style={{
-                        left: x * tilePx,
-                        top: y * tilePx,
-                        width: tilePx,
-                        height: tilePx,
-                        background: wall
-                          ? 'linear-gradient(180deg, rgba(30,41,59,1), rgba(15,23,42,1))'
-                          : 'rgba(2,6,23,1)',
-                        boxShadow: wall
-                          ? 'inset 0 0 0 1px rgba(255,255,255,0.06)'
-                          : 'inset 0 0 0 1px rgba(255,255,255,0.02)',
-                      }}
-                    />
-                  );
-                })
-              )}
-
-              {(wave || []).map((q) => (
-                <div
-                  key={q.id}
-                  className="absolute flex items-center justify-center font-black"
-                  style={{
-                    left: q.x * tilePx + Math.floor(tilePx * 0.15),
-                    top: q.y * tilePx + Math.floor(tilePx * 0.15),
-                    width: Math.floor(tilePx * 0.7),
-                    height: Math.floor(tilePx * 0.7),
-                    borderRadius: 999,
-                    background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
-                    color: 'rgba(2,6,23,0.95)',
-                    boxShadow: '0 4px 10px rgba(0,0,0,0.25), inset 0 0 0 2px rgba(255,255,255,0.22)',
-                    fontSize: Math.max(11, Math.floor(tilePx * 0.48)),
-                    zIndex: 10,
-                  }}
-                  title={`${q.letter}: ${q.event}`}
-                >
-                  {q.letter}
-                </div>
-              ))}
-
-              <div
-                className="absolute"
-                style={{
-                  left: player.x * tilePx,
-                  top: player.y * tilePx,
-                  width: tilePx,
-                  height: tilePx,
-                  zIndex: 12,
-                }}
-              >
-                <div
-                  className="w-full h-full rounded-full"
-                  style={{
-                    background: 'radial-gradient(circle at 30% 30%, rgba(253,230,138,1), rgba(245,158,11,1))',
-                    boxShadow: '0 6px 12px rgba(0,0,0,0.35), inset 0 0 0 2px rgba(255,255,255,0.20)',
-                  }}
-                />
-              </div>
-
-              {(ghosts || []).map((g) => {
-                const color =
-                  g.id === 'g1'
-                    ? 'linear-gradient(180deg, rgba(248,113,113,1), rgba(220,38,38,1))'
-                    : g.id === 'g2'
-                      ? 'linear-gradient(180deg, rgba(167,139,250,1), rgba(124,58,237,1))'
-                      : g.id === 'g3'
-                        ? 'linear-gradient(180deg, rgba(96,165,250,1), rgba(37,99,235,1))'
-                        : 'linear-gradient(180deg, rgba(251,146,60,1), rgba(234,88,12,1))';
-
-                return (
-                  <div
-                    key={g.id}
-                    className="absolute"
-                    style={{
-                      left: g.x * tilePx,
-                      top: g.y * tilePx,
-                      width: tilePx,
-                      height: tilePx,
-                      zIndex: 11,
-                    }}
-                    title="ghost"
-                  >
-                    <div
-                      className="w-full h-full"
-                      style={{
-                        borderRadius: Math.floor(tilePx * 0.35),
-                        background: color,
-                        boxShadow: '0 6px 12px rgba(0,0,0,0.35), inset 0 0 0 2px rgba(255,255,255,0.18)',
-                      }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <Board />
 
           <div className="text-center">
             <Link href="/" className="text-xs text-sky-700 hover:underline">

@@ -266,13 +266,16 @@ function parseImportedQuestions(csvText, opts = {}) {
       item.textAnswer = (answersText || '').trim();
       item.altTextAnswers = [''];
     } else if (questionType === 'single') {
-      item.correctChoices = answersList.length > 0 ? answersList : answersText ? [answersText] : [''];
+      item.correctChoices =
+        answersList.length > 0 ? answersList : answersText ? [answersText] : [''];
       item.wrongChoices = wrongList.length > 0 ? wrongList : [''];
     } else if (questionType === 'multi') {
-      item.correctChoices = answersList.length > 0 ? answersList : answersText ? [answersText] : [''];
+      item.correctChoices =
+        answersList.length > 0 ? answersList : answersText ? [answersText] : [''];
       item.wrongChoices = wrongList.length > 0 ? wrongList : [''];
     } else if (questionType === 'order') {
-      item.orderChoices = answersList.length > 0 ? answersList : answersText ? [answersText] : [''];
+      item.orderChoices =
+        answersList.length > 0 ? answersList : answersText ? [answersText] : [''];
     }
 
     imported.push(item);
@@ -452,7 +455,9 @@ export default function SubmitPage() {
       });
 
       if (!res.ok) {
-        setMessage('類似問題チェックに失敗しました。チェックを飛ばすか、時間をおいて再度お試しください。');
+        setMessage(
+          '類似問題チェックに失敗しました。チェックを飛ばすか、時間をおいて再度お試しください。'
+        );
         return null;
       }
 
@@ -460,7 +465,9 @@ export default function SubmitPage() {
       return data.duplicates || [];
     } catch (e) {
       console.error(e);
-      setMessage('類似問題チェックでエラーが出ました。チェックを飛ばすか、時間をおいて再度お試しください。');
+      setMessage(
+        '類似問題チェックでエラーが出ました。チェックを飛ばすか、時間をおいて再度お試しください。'
+      );
       return null;
     } finally {
       setCheckingDup(false);
@@ -490,8 +497,10 @@ export default function SubmitPage() {
       const correct = cleanArray(correctChoices);
       const wrong = cleanArray(wrongChoices);
 
-      if (correct.length !== 1) return { error: '単一選択は「解答」をちょうど1つにしてください。' };
-      if (wrong.length === 0) return { error: '不正解の選択肢を1つ以上入力してください。' };
+      if (correct.length !== 1)
+        return { error: '単一選択は「解答」をちょうど1つにしてください。' };
+      if (wrong.length === 0)
+        return { error: '不正解の選択肢を1つ以上入力してください。' };
 
       options = [...correct, ...wrong];
       answer = correct[0];
@@ -500,14 +509,16 @@ export default function SubmitPage() {
       const correct = cleanArray(correctChoices);
       const wrong = cleanArray(wrongChoices);
 
-      if (correct.length < 1) return { error: '複数選択は「解答」を1つ以上入力してください。' };
+      if (correct.length < 1)
+        return { error: '複数選択は「解答」を1つ以上入力してください。' };
 
       options = [...correct, ...wrong];
       answer = correct.join('||');
       altAnswers = [];
     } else if (questionType === 'order') {
       const order = cleanArray(orderChoices);
-      if (order.length < 2) return { error: '並び替えは2つ以上の項目を入力してください。' };
+      if (order.length < 2)
+        return { error: '並び替えは2つ以上の項目を入力してください。' };
 
       options = order;
       answer = order.join('||');
@@ -566,14 +577,15 @@ export default function SubmitPage() {
     try {
       setSubmitting(true);
 
-      const url = skipDuplicateCheck ? '/api/submit-question-fast' : '/api/submit-question';
+      const url = skipDuplicateCheck
+        ? '/api/submit-question-fast'
+        : '/api/submit-question';
 
-const res = await fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(payload),
-});
-
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -585,7 +597,11 @@ const res = await fetch(url, {
       setMessage('問題を送信しました。承認されると本番に反映されます。');
       resetForm();
 
-      if (!importAutoFillPaused && importQueue.length > 0 && importIndex < importQueue.length) {
+      if (
+        !importAutoFillPaused &&
+        importQueue.length > 0 &&
+        importIndex < importQueue.length
+      ) {
         const nextItem = importQueue[importIndex];
         applyImportedQuestion(nextItem);
         const nextIndex = importIndex + 1;
@@ -615,7 +631,9 @@ const res = await fetch(url, {
 
     setImportQueue((prev) => {
       const next = [...prev, ...list];
-      setImportInfo(`${list.length}問をストックに追加しました。（ストック合計 ${next.length}問）`);
+      setImportInfo(
+        `${list.length}問をストックに追加しました。（ストック合計 ${next.length}問）`
+      );
       return next;
     });
   };
@@ -624,7 +642,9 @@ const res = await fetch(url, {
     setImportAutoFillPaused(false);
 
     if (importQueue.length === 0) {
-      setImportInfo('ストックが空です。CSV/TSVを貼り付けて「ストックに追加」を押してください。');
+      setImportInfo(
+        'ストックが空です。CSV/TSVを貼り付けて「ストックに追加」を押してください。'
+      );
       return;
     }
     if (importIndex >= importQueue.length) {
@@ -642,7 +662,9 @@ const res = await fetch(url, {
     setImportAutoFillPaused(false);
 
     if (importQueue.length === 0) {
-      setImportInfo('ストックが空です。CSV/TSVを貼り付けて「ストックに追加」を押してください。');
+      setImportInfo(
+        'ストックが空です。CSV/TSVを貼り付けて「ストックに追加」を押してください。'
+      );
       return;
     }
     if (importIndex <= 1) {
@@ -657,7 +679,9 @@ const res = await fetch(url, {
     const item = importQueue[prevIndex - 1];
     applyImportedQuestion(item);
     setImportIndex(prevIndex);
-    setImportInfo(`読み込み済み: ${prevIndex} / ${importQueue.length} 問（1つ前の問題に戻りました）`);
+    setImportInfo(
+      `読み込み済み: ${prevIndex} / ${importQueue.length} 問（1つ前の問題に戻りました）`
+    );
   };
 
   const handleSwitchToNormal = () => {
@@ -712,7 +736,9 @@ const res = await fetch(url, {
           setImportQueue(parsed);
           setImportIndex(idx);
           setImportInfo(
-            `前回のストックを復元しました。全 ${parsed.length} 問 / 次のインデックス: ${idx + 1}`
+            `前回のストックを復元しました。全 ${parsed.length} 問 / 次のインデックス: ${
+              idx + 1
+            }`
           );
         }
       }
@@ -741,25 +767,28 @@ const res = await fetch(url, {
       <div className="max-w-xl mx-auto space-y-4">
         {/* ヘッダー：タイトル + ボタン群 */}
         <header className="flex items-center justify-between mb-2">
-          <h1 className="text-xl font-bold">問題を投稿する</h1>
+          <h1 className="text-lg sm:text-xl font-bold">問題を投稿する</h1>
+
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setImportOpen((v) => !v)}
-              className="border border-emerald-400 px-3 py-1 rounded-full text-xs font-bold bg-slate-900 text-emerald-100 shadow-sm"
+              className="border border-emerald-400 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 text-emerald-100 shadow-sm"
             >
               問題読み込み
             </button>
+
             <button
               type="button"
               onClick={() => setCarryOpen((v) => !v)}
-              className="border border-sky-400 px-3 py-1 rounded-full text-xs font-bold bg-slate-900 text-sky-100 shadow-sm"
+              className="border border-sky-400 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 text-sky-100 shadow-sm"
             >
               前の条件を引き継ぐ
             </button>
+
             <Link
               href="/"
-              className="border border-sky-400 px-3 py-1 rounded-full text-xs font-bold text-sky-200 bg-slate-900"
+              className="border border-sky-400 px-2.5 py-1 rounded-full text-[11px] font-bold text-sky-200 bg-slate-900"
             >
               ホームへ
             </Link>
@@ -769,10 +798,14 @@ const res = await fetch(url, {
         {/* CSV 読み込みパネル */}
         {importOpen && (
           <div className="mb-2 text-xs bg-slate-900 border border-emerald-500 rounded-2xl px-3 py-3 space-y-2">
-            <div className="font-semibold text-emerald-200 mb-1">CSV / TSV から問題を読み込む</div>
+            <div className="font-semibold text-emerald-200 mb-1">
+              CSV / TSV から問題を読み込む
+            </div>
 
             <div className="text-[11px] text-slate-400 leading-relaxed">
-              対応：<span className="text-emerald-200 font-semibold">2列形式</span>（問題,答え） / アプリ形式（questionId,question,answers,...）
+              対応：
+              <span className="text-emerald-200 font-semibold">2列形式</span>
+              （問題,答え） / アプリ形式（questionId,question,answers,...）
               <br />
               ※ Excel からコピペしたタブ区切り（TSV）もOK
             </div>
@@ -846,7 +879,9 @@ TSVもOK（Excelからそのまま貼れる）`}
             </div>
 
             {importInfo && (
-              <div className="mt-1 text-[11px] text-emerald-200 whitespace-pre-line">{importInfo}</div>
+              <div className="mt-1 text-[11px] text-emerald-200 whitespace-pre-line">
+                {importInfo}
+              </div>
             )}
           </div>
         )}
@@ -915,102 +950,98 @@ TSVもOK（Excelからそのまま貼れる）`}
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* 種別 + 高速チェック */}
           <div className="space-y-1 text-sm">
-           <div className="flex items-center gap-2">
-  <label className="block font-semibold whitespace-nowrap">問題タイプ</label>
+            <div className="flex items-center gap-2">
+              <label className="block font-semibold whitespace-nowrap text-[13px]">
+                問題タイプ
+              </label>
 
-  {/* ★右寄せの土台：ここがポイント */}
-  <div className="flex items-center gap-2 ml-auto">
-    {/* テーマ相談（類似チェックの左に寄せる） */}
-    <ThemeSuggestModal
-  onApply={(picked) => {
-    // =========================
-    // ★ タイトルを問題文用に整形
-    // =========================
-    let title = String(picked?.title || '').trim();
+              {/* ★右寄せ */}
+              <div className="flex items-center gap-2 ml-auto">
+                {/* テーマ相談 */}
+                <ThemeSuggestModal
+                  onApply={(picked) => {
+                    // =========================
+                    // ★ タイトルを問題文用に整形
+                    // =========================
+                    let title = String(picked?.title || '').trim();
 
-    // 「から作問」を削除
-    title = title.replace(/から作問$/, '').trim();
+                    // 「から作問」を削除
+                    title = title.replace(/から作問$/, '').trim();
 
-    // kind別処理
-    if (picked?.kind === 'subtitles') {
-      // 第50話「己が路（みち）」 → 第50話“己が路（みち）”
-      title = title.replace(/第(\d+)話「(.+?)」/, '第$1話“$2”');
-    }
+                    // kind別処理
+                    if (picked?.kind === 'subtitles') {
+                      // 第50話「己が路（みち）」 → 第50話“己が路（みち）”
+                      title = title.replace(/第(\d+)話「(.+?)」/, '第$1話“$2”');
+                    }
 
-    if (picked?.kind === 'char' || picked?.kind === 'waza') {
-      // 「」の中身だけ取り出す
-      const m = title.match(/「(.+?)」/);
-      if (m) {
-        title = m[1];
-      }
-    }
+                    if (picked?.kind === 'char' || picked?.kind === 'waza') {
+                      // 「」の中身だけ取り出す
+                      const m = title.match(/「(.+?)」/);
+                      if (m) title = m[1];
+                    }
 
-    if (title) {
-      setQuestion(title);
-    }
+                    if (title) setQuestion(title);
 
-    // =========================
-    // 以降は既存ロジックそのまま
-    // =========================
-    const d = picked?.draft;
+                    // =========================
+                    // 以降は既存ロジックそのまま
+                    // =========================
+                    const d = picked?.draft;
 
-    if (picked?.kind === 'waza' && d?.question) {
-      setQuestionType('single');
-      setQuestion(d.question || title);
-      const opts = Array.isArray(d.options) ? d.options : [];
-      const correct = d.correct ? [String(d.correct)] : [''];
-      const wrong = opts.filter((x) => String(x) !== String(d.correct));
+                    if (picked?.kind === 'waza' && d?.question) {
+                      setQuestionType('single');
+                      setQuestion(d.question || title);
+                      const opts = Array.isArray(d.options) ? d.options : [];
+                      const correct = d.correct ? [String(d.correct)] : [''];
+                      const wrong = opts.filter((x) => String(x) !== String(d.correct));
 
-      setCorrectChoices(correct.length ? correct : ['']);
-      setWrongChoices(wrong.length ? wrong : ['']);
-      setTextAnswer('');
-      setAltTextAnswers(['']);
-      setOrderChoices(['']);
-      return;
-    }
+                      setCorrectChoices(correct.length ? correct : ['']);
+                      setWrongChoices(wrong.length ? wrong : ['']);
+                      setTextAnswer('');
+                      setAltTextAnswers(['']);
+                      setOrderChoices(['']);
+                      return;
+                    }
 
-    if (picked?.kind === 'subtitles') {
-      setQuestionType('text');
-      setTextAnswer('');
-      setAltTextAnswers(['']);
-      setCorrectChoices(['']);
-      setWrongChoices(['']);
-      setOrderChoices(['']);
-      return;
-    }
+                    if (picked?.kind === 'subtitles') {
+                      setQuestionType('text');
+                      setTextAnswer('');
+                      setAltTextAnswers(['']);
+                      setCorrectChoices(['']);
+                      setWrongChoices(['']);
+                      setOrderChoices(['']);
+                      return;
+                    }
 
-    if (picked?.kind === 'char') {
-      setQuestionType('text');
-      setTextAnswer('');
-      setAltTextAnswers(['']);
-      setCorrectChoices(['']);
-      setWrongChoices(['']);
-      setOrderChoices(['']);
-      return;
-    }
-  }}
-/>
+                    if (picked?.kind === 'char') {
+                      setQuestionType('text');
+                      setTextAnswer('');
+                      setAltTextAnswers(['']);
+                      setCorrectChoices(['']);
+                      setWrongChoices(['']);
+                      setOrderChoices(['']);
+                      return;
+                    }
+                  }}
+                />
 
-
-
-    {/* 類似を飛ばす（高速） */}
-    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-      <input
-        type="checkbox"
-        className="accent-amber-400"
-        checked={skipDuplicateCheck}
-        onChange={() => {
-          setSkipDuplicateCheck((v) => !v);
-          setConfirmMode(false);
-          setDuplicates([]);
-        }}
-      />
-      <span className="text-xs text-amber-200 font-semibold">類似チェックをしない</span>
-    </label>
-  </div>
-</div>
-
-
+                {/* 類似チェックをしない */}
+                <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="accent-amber-400 scale-90"
+                    checked={skipDuplicateCheck}
+                    onChange={() => {
+                      setSkipDuplicateCheck((v) => !v);
+                      setConfirmMode(false);
+                      setDuplicates([]);
+                    }}
+                  />
+                  <span className="text-[11px] text-amber-200 font-semibold">
+                    類似チェックなし
+                  </span>
+                </label>
+              </div>
+            </div>
 
             <select
               className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
@@ -1057,7 +1088,9 @@ TSVもOK（Excelからそのまま貼れる）`}
                     <input
                       className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                       value={v}
-                      onChange={(e) => handleArrayChange(i, e.target.value, setAltTextAnswers)}
+                      onChange={(e) =>
+                        handleArrayChange(i, e.target.value, setAltTextAnswers)
+                      }
                     />
                     <button
                       type="button"
@@ -1091,7 +1124,9 @@ TSVもOK（Excelからそのまま貼れる）`}
                     <input
                       className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                       value={v}
-                      onChange={(e) => handleArrayChange(i, e.target.value, setCorrectChoices)}
+                      onChange={(e) =>
+                        handleArrayChange(i, e.target.value, setCorrectChoices)
+                      }
                     />
                     <button
                       type="button"
@@ -1125,7 +1160,9 @@ TSVもOK（Excelからそのまま貼れる）`}
                     <input
                       className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                       value={v}
-                      onChange={(e) => handleArrayChange(i, e.target.value, setWrongChoices)}
+                      onChange={(e) =>
+                        handleArrayChange(i, e.target.value, setWrongChoices)
+                      }
                     />
                     <button
                       type="button"
@@ -1161,7 +1198,9 @@ TSVもOK（Excelからそのまま貼れる）`}
                   <input
                     className="flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-[16px]"
                     value={v}
-                    onChange={(e) => handleArrayChange(i, e.target.value, setOrderChoices)}
+                    onChange={(e) =>
+                      handleArrayChange(i, e.target.value, setOrderChoices)
+                    }
                   />
                   <button
                     type="button"
@@ -1188,7 +1227,9 @@ TSVもOK（Excelからそのまま貼れる）`}
               <label className="font-semibold">
                 タグ <span className="text-rose-400">最低1つ以上</span>
               </label>
-              <span className="text-xs text-slate-400">ストーリー → その他の順で並んでいます</span>
+              <span className="text-xs text-slate-400">
+                ストーリー → その他の順で並んでいます
+              </span>
             </div>
             <div className="flex flex-wrap gap-1 mb-1">
               {TAGS_STORY.map((tag) => (
@@ -1238,7 +1279,8 @@ TSVもOK（Excelからそのまま貼れる）`}
                     className="border border-slate-700 rounded-md p-2"
                   >
                     <div className="text-slate-400 mb-1">
-                      ID: {q.id}（{q.source === 'questions' ? '本番' : '投稿中'} / {q.status}）
+                      ID: {q.id}（{q.source === 'questions' ? '本番' : '投稿中'} /{' '}
+                      {q.status}）
                     </div>
                     <div className="text-slate-100 whitespace-pre-wrap">
                       {q.question_text || q.question || ''}
@@ -1287,7 +1329,8 @@ TSVもOK（Excelからそのまま貼れる）`}
 
             {!skipDuplicateCheck && (
               <div className="mt-2 text-[11px] text-slate-400 leading-relaxed">
-                ※ 通常は投稿前に類似チェックを行うので少し時間がかかります。<br />
+                ※ 通常は投稿前に類似チェックを行うので少し時間がかかります。
+                <br />
                 高速にしたい場合は「問題タイプ右のチェック」をONにしてください。
               </div>
             )}
