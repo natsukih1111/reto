@@ -70,12 +70,10 @@ function mulberry32(seed) {
 }
 function makeSeedFromQuestion(q) {
   const base = Number(q?.id ?? 0) || 0;
-  // idが無いケースでも安定するように軽く混ぜる
   const a = (base * 2654435761) >>> 0;
   const b = (String(q?.answer ?? '').length * 1013904223) >>> 0;
   return (a ^ b) >>> 0;
 }
-
 
 // ===== ヒント配列化（DBが text[] / text の両対応）=====
 function splitHintsAny(v) {
@@ -316,26 +314,26 @@ export default function WhoIsPlayPage() {
 
   // ===== ヒント：最初から全部表示（最大5）=====
   const hintsAll = useMemo(() => splitHintsAny(current?.hints), [current]);
-  const hintsShown = useMemo(() => hintsAll.slice(0, 5), [hintsAll]); // 常に全部
-const floatCfg = useMemo(() => {
-  const seed = makeSeedFromQuestion(current);
-  const rnd = mulberry32(seed);
-  return hintsShown.map(() => {
-    // ふわふわ周期と位相を固定
-    const floatDur = (5.6 + rnd() * 2.4).toFixed(2); // 5.6〜8.0
-    const floatDelay = (-rnd() * 2.5).toFixed(2); // -2.5〜0（開始位相ズラし）
-    const rot = (rnd() * 0.18 - 0.09).toFixed(3); // -0.09〜0.09deg
-    const amp = (8 + rnd() * 10).toFixed(2); // 8〜18px
-    return { floatDur, floatDelay, rot, amp };
-  });
-}, [current?.id, current?.answer, hintsShown.length]);
+  const hintsShown = useMemo(() => hintsAll.slice(0, 5), [hintsAll]);
 
+  const floatCfg = useMemo(() => {
+    const seed = makeSeedFromQuestion(current);
+    const rnd = mulberry32(seed);
+    return hintsShown.map(() => {
+      const floatDur = (5.6 + rnd() * 2.4).toFixed(2);
+      const floatDelay = (-rnd() * 2.5).toFixed(2);
+      const rot = (rnd() * 0.18 - 0.09).toFixed(3);
+      const amp = (8 + rnd() * 10).toFixed(2);
+      return { floatDur, floatDelay, rot, amp };
+    });
+  }, [current?.id, current?.answer, hintsShown.length]);
 
+  // ★位置：center基準で置く（はみ出しにくい）
   const hintPositions = [
-    { x: 18, y: 30 },
+    { x: 20, y: 30 },
     { x: 82, y: 30 },
     { x: 50, y: 14 },
-    { x: 18, y: 68 },
+    { x: 22, y: 68 },
     { x: 82, y: 68 },
   ];
 
@@ -533,9 +531,18 @@ const floatCfg = useMemo(() => {
         }
 
         :root {
-          --doorInsetX: 205px;
-          --doorInsetTop: 50px;
-          --doorInsetBottom: 30px;
+          /* ★ここは clamp に戻す（スマホでLeafSlotが死なない） */
+          --doorInsetX: clamp(50px, 12vw, 190px);
+          --doorInsetTop: clamp(40px, 6vw, 50px);
+          --doorInsetBottom: clamp(35px, 5vw, 34px);
+
+          /* ★中身だけ縮めるスケール */
+          --whois-inner-scale: 1;
+        }
+        @media (max-width: 640px) {
+          :root {
+            --whois-inner-scale: 0.84; /* 好みで 0.80〜0.88 */
+          }
         }
 
         .whoisDoorStage {
@@ -553,6 +560,14 @@ const floatCfg = useMemo(() => {
             radial-gradient(900px 520px at 60% 95%, rgba(214, 190, 160, 0.28), transparent 62%),
             linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.12));
           isolation: isolate;
+        }
+
+        /* ★枠はそのまま、中身だけ縮める */
+        .whoisDoorInner {
+          position: absolute;
+          inset: 0;
+          transform: scale(var(--whois-inner-scale));
+          transform-origin: center center;
         }
 
         .whoisBeyond {
@@ -627,6 +642,11 @@ const floatCfg = useMemo(() => {
           transition: transform 1.05s cubic-bezier(0.2, 0.9, 0.2, 1);
           box-shadow: 0 26px 55px rgba(10, 19, 42, 0.22);
           filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.1));
+opacity: 1;
+transition-property: transform, opacity;
+  transition-duration: 1.05s, 0.32s;
+  transition-timing-function: cubic-bezier(0.2, 0.9, 0.2, 1), ease;
+  transition-delay: 0s, 0s;
         }
         .whoisDoorLeaf.left {
           left: 0;
@@ -639,10 +659,15 @@ const floatCfg = useMemo(() => {
           background-position: 100% 50%;
         }
 
-        .whoisDoorOpen .whoisDoorLeaf {
-          z-index: 60;
-          transform: translateZ(40px);
-        }
+       .whoisDoorOpen .whoisDoorLeaf {
+  z-index: 60;
+  transform: translateZ(40px);
+
+  /* ★開いたあとだけ消える（opacityだけ遅延） */
+  opacity: 0;
+  transition-delay: 0s, 0.46s; /* transformは即、opacityだけ0.86s後 */
+}
+
         .whoisDoorOpen .whoisDoorLeaf.left {
           transform: translateZ(40px) rotateY(-82deg);
         }
@@ -682,12 +707,18 @@ const floatCfg = useMemo(() => {
           left: 50%;
           top: 56%;
           transform: translate(-50%, -50%);
-          width: min(260px, 42%);
-          height: 56%;
+          width: min(240px, 40%); /* ★少し小さく */
+          height: 54%;
           opacity: 0;
           pointer-events: none;
           filter: drop-shadow(0 18px 30px rgba(10, 19, 42, 0.16));
           z-index: 30;
+        }
+        @media (max-width: 640px) {
+          .whoisSilWrap {
+            width: min(200px, 36%); /* ★スマホでさらに小さく */
+            height: 52%;
+          }
         }
         .whoisSilImg {
           width: 100%;
@@ -722,58 +753,75 @@ const floatCfg = useMemo(() => {
           opacity: 1;
         }
 
+        /* ===== hint bubble（center基準 + スマホ縮小）===== */
         .whoisHintBubble {
-  position: absolute;
-  min-width: 170px;
-  max-width: 260px;
-  padding: 12px 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(11, 22, 48, 0.14);
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 18px 42px rgba(10, 19, 42, 0.12);
-  opacity: 0;
-  transform: translate3d(0, 16px, 0) scale(0.98);
-  animation: whoisBubbleIn 0.55s cubic-bezier(0.2, 0.9, 0.2, 1) forwards,
-    whoisFloatyBox var(--floatDur, 9s) ease-in-out infinite;
-  backdrop-filter: blur(10px);
-  will-change: transform, opacity;
-}
+          position: absolute;
+          width: min(260px, 72vw);
+          padding: 10px 10px;
+          border-radius: 18px;
+          border: 1px solid rgba(11, 22, 48, 0.14);
+          background: rgba(255, 255, 255, 0.86);
+          box-shadow: 0 18px 42px rgba(10, 19, 42, 0.12);
+          opacity: 0;
 
-.whoisHintBubbleInner {
-  will-change: auto;
-  transform: none;
-  animation: none;
-}
+          transform: translate(-50%, -50%) translate3d(0, 16px, 0) scale(0.98);
+          animation: whoisBubbleIn 0.55s cubic-bezier(0.2, 0.9, 0.2, 1) forwards,
+            whoisFloatyBox var(--floatDur, 7s) ease-in-out infinite;
 
+          backdrop-filter: blur(10px);
+          will-change: transform, opacity;
+        }
 
-@keyframes whoisBubbleIn {
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
+        .whoisHintBubble .t {
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          color: rgba(57, 82, 112, 0.95);
+          font-weight: 950;
+          margin-bottom: 6px;
+        }
+        .whoisHintBubble .b {
+          font-size: 14px;
+          color: rgba(11, 22, 48, 0.92);
+          line-height: 1.55;
+          font-weight: 850;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
 
-@keyframes whoisFloatyBox {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(var(--rot, 0deg));
-  }
-  50% {
-    transform: translate3d(0, calc(var(--amp, 10px) * -1), 0) rotate(calc(var(--rot, 0deg) * -1));
-  }
-}
+        @media (max-width: 640px) {
+          .whoisHintBubble {
+            width: min(210px, 78vw);
+            padding: 8px 8px;
+            border-radius: 14px;
+          }
+          .whoisHintBubble .t {
+            font-size: 10px;
+            margin-bottom: 4px;
+          }
+          .whoisHintBubble .b {
+            font-size: 12px;
+            line-height: 1.35;
+          }
+        }
 
+        @keyframes whoisBubbleIn {
+          to {
+            opacity: 1;
+            transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1);
+          }
+        }
 
-@keyframes whoisFloaty {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(var(--rot, 0deg));
-  }
-  50% {
-    transform: translate3d(0, calc(var(--amp, 12px) * -1), 0) rotate(calc(var(--rot, 0deg) * -1));
-  }
-}
-
+        @keyframes whoisFloatyBox {
+          0%,
+          100% {
+            transform: translate(-50%, -50%) translate3d(0, 0, 0) rotate(var(--rot, 0deg));
+          }
+          50% {
+            transform: translate(-50%, -50%) translate3d(0, calc(var(--amp, 12px) * -1), 0)
+              rotate(calc(var(--rot, 0deg) * -1));
+          }
+        }
 
         .whoisOverlay {
           position: absolute;
@@ -781,7 +829,11 @@ const floatCfg = useMemo(() => {
           display: flex;
           align-items: center;
           justify-content: center;
-          background: radial-gradient(900px 520px at 50% 40%, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.15));
+          background: radial-gradient(
+            900px 520px at 50% 40%,
+            rgba(255, 255, 255, 0.7),
+            rgba(255, 255, 255, 0.15)
+          );
           backdrop-filter: blur(10px);
           z-index: 80;
         }
@@ -906,55 +958,50 @@ const floatCfg = useMemo(() => {
               >
                 <div className={`whoisDoorStage ${doorOpen ? 'whoisDoorOpen' : ''}`}>
                   <div className="whoisDoorway" aria-hidden="true">
-                    <div className="whoisBeyond" />
-                    <div className="whoisSpot" />
+                    {/* ★ここが重要：中身をまとめて縮める */}
+                    <div className="whoisDoorInner">
+                      <div className="whoisBeyond" />
+                      <div className="whoisSpot" />
 
-                    <div className="whoisLeafSlot" aria-hidden="true">
-                      <div className="whoisDoorLeaf left" />
-                      <div className="whoisDoorLeaf right" />
+                      <div className="whoisLeafSlot" aria-hidden="true">
+                        <div className="whoisDoorLeaf left" />
+                        <div className="whoisDoorLeaf right" />
+                      </div>
+
+                      <div className="whoisSeam" aria-hidden="true" />
+                      <div className="whoisFrameOverlay" aria-hidden="true" />
+
+                      <div className="whoisSilWrap" aria-hidden="true">
+                        <img className="whoisSilImg" src={IMG_SIL} alt="silhouette" />
+                      </div>
+
+                      <div className="whoisOrbs" aria-hidden="true">
+                        {doorOpen &&
+                          phase !== 'idle' &&
+                          hintsShown.map((h, i) => {
+                            const p = hintPositions[i] || { x: 50, y: 50 };
+                            const delay = (i * 0.1).toFixed(2);
+
+                            return (
+                              <div
+                                key={`${idx}-${i}`}
+                                className="whoisHintBubble"
+                                style={{
+                                  left: `${p.x}%`,
+                                  top: `${p.y}%`,
+                                  animationDelay: `${delay}s`,
+                                  ['--rot']: `${floatCfg[i]?.rot ?? '0'}deg`,
+                                  ['--amp']: `${floatCfg[i]?.amp ?? '12'}px`,
+                                  ['--floatDur']: `${floatCfg[i]?.floatDur ?? '6.5'}s`,
+                                }}
+                              >
+                                <div className="t">HINT {i + 1}</div>
+                                <div className="b">{h}</div>
+                              </div>
+                            );
+                          })}
+                      </div>
                     </div>
-
-                    <div className="whoisSeam" aria-hidden="true" />
-                    <div className="whoisFrameOverlay" aria-hidden="true" />
-
-                    <div className="whoisSilWrap" aria-hidden="true">
-                      <img className="whoisSilImg" src={IMG_SIL} alt="silhouette" />
-                    </div>
-
-                   <div className="whoisOrbs" aria-hidden="true">
-  {doorOpen &&
-    phase !== 'idle' &&
-    hintsShown.map((h, i) => {
-      const p = hintPositions[i] || { x: 50, y: 50 };
-      const delay = (i * 0.1).toFixed(2);
-
-      return (
-        <div
-          key={`${idx}-${i}`}
-          className="whoisHintBubble"
-          style={{
-            left: `calc(${p.x}% - 120px)`,
-            top: `calc(${p.y}% - 42px)`,
-            animationDelay: `${delay}s`,
-          }}
-        >
-          <div
-            className="whoisHintBubbleInner"
-            style={{
-              animationDelay: `${floatCfg[i]?.floatDelay ?? '0'}s`,
-              animationDuration: `${floatCfg[i]?.floatDur ?? '6.5'}s`,
-              ['--rot']: `${floatCfg[i]?.rot ?? '0'}deg`,
-              ['--amp']: `${floatCfg[i]?.amp ?? '12'}px`,
-            }}
-          >
-            <div className="t">HINT {i + 1}</div>
-            <div className="b">{h}</div>
-          </div>
-        </div>
-      );
-    })}
-</div>
-
 
                     {phase === 'idle' ? (
                       <div className="whoisOverlay">
