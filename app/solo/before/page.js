@@ -1,7 +1,7 @@
 // file: app/solo/before/page.js
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useId } from 'react';
 import Link from 'next/link';
 import QuestionReviewAndReport from '@/components/QuestionReviewAndReport';
 
@@ -16,33 +16,33 @@ const GAME_H = 520;
  */
 const MAZE = [
   '1111111111111111111111111111', // 0
-  '1000000010000010000010000001', // 1
-  '1011101010101010101010111101', // 2
-  '1000001000101000101000000101', // 3
-  '1011101110101111101011110101', // 4
-  '1000100000101000101000010001', // 5
-  '1110101111101011101111010111', // 6
-  '1000001000001000000001010001', // 7
-  '1011001011111111111101011101', // 8
-  '1000000010000110000100000001', // 9
-  '1111111010110110110101111111', // 10
-  '1000000010100000000101000001', // 11
-  '1011111110101111110101111101', // 12
-  '1010000000001000010000000101', // 13
-  '1010111111111000011111110101', // 14  ←左右トンネル帯（ワープさせる）
-  '1010100000000000000000010101', // 15
-  '1010101111110111101111010101', // 16
-  '1000101000000100001000010001', // 17
-  '1111101011111111111010111111', // 18
-  '1000000010000110000100000001', // 19
-  '1011111111100110011111111101', // 20
-  '1010000000100000001000000101', // 21
-  '1010111110101111101011110101', // 22
-  '1000100000101000101000010001', // 23
-  '1110101111101011101111010111', // 24
-  '1000101000001000000001010001', // 25
-  '1011101011111111111101011101', // 26
-  '1000000010000110000100000001', // 27
+  '1000000000110000110000000001', // 1
+  '1011110110110110110110111101', // 2
+  '1011110110110110110110111101', // 3
+  '1000000110000110000110000001', // 4
+  '1011110111110110111110111101', // 5
+  '1011110111110110111110111101', // 6
+  '1011000000000110000000001101', // 7
+  '1011011110111111110111101101', // 8
+  '1011011110111111110111101101', // 9
+  '0000000000000000000000000000', // 10←左右トンネル帯（ワープさせる）
+  '1011110110111111110110111101', // 11
+  '1011110110100000010110111101', // 12
+  '1011110110100000010110111101', // 13
+  '1000000110111111110110000001', // 14
+  '1011110110111111110110111101', // 15
+  '1011110110000000000110111101', // 16
+  '1000110110111111110110110001', // 17
+  '1110110110111111110110110111', // 18
+  '1110110000000110000000110111', // 19
+  '0000110111110110111110110000', // 20←左右トンネル帯（ワープさせる）
+  '1011110111110110111110111101', // 21
+  '1011110110000000000110111101', // 22
+  '1000000110110110110110000001', // 23
+  '1011011110110110110111101101', // 24
+  '1011011110110110110111101101', // 25
+  '1011000000110000110000001101', // 26
+  '1011111110111111110111111101', // 27
   '1011111110111111110111111101', // 28
   '1000000000000000000000000001', // 29
   '1111111111111111111111111111', // 30
@@ -53,9 +53,10 @@ const COLS = MAZE[0].length; // 28
 
 // ===== スピード・タイミング =====
 const STEP_MS = 140; // プレイヤー基本移動（タイル）
-const GHOST_STEP_MS = 175; // ゴースト基本移動（タイル）
+const GHOST_STEP_MS = 160; // ゴースト基本移動（タイル）
 
 const PREVIEW_SEC = 10; // 問題を最初に見せる秒数（WAVE開始前）
+const WAVE_FREEZE_SEC = 10; // 次WAVE生成時に10秒停止
 
 // A〜E（問題エサ）
 const PELLET_COUNT = 5;
@@ -69,13 +70,27 @@ const FRUIT_INTERVAL_MS = 10000; // 10秒
 const FRUIT_REVEAL_MS = 1000; // 1秒だけ答え表示
 
 // ===== 固定配置（クラシック寄せ）=====
-const PLAYER_START = { x: 13, y: 23 }; // 下側中央付近
-const PEN = { x: 13, y: 15 }; // 中央箱の中心
+const PLAYER_START = { x: 13, y: 22 }; // 下側中央付近
+const PEN = { x: 13, y: 13 }; // 中央箱の中心
+
+// ペン（中央箱）の「内部判定」用（だいたいこの範囲を箱扱い）
+const PEN_RECT = { x0: 10, x1: 17, y0: 12, y1: 16 };
+
+// 出入口（このマスへ向かって出ていく）
+const PEN_EXIT = { x: 13, y: 11 };
+
+// 出入口の「通行許可」座標
+const PEN_DOORS = new Set([`${PEN_EXIT.x},${PEN_EXIT.y}`]);
+
+function inPen(x, y) {
+  return x >= PEN_RECT.x0 && x <= PEN_RECT.x1 && y >= PEN_RECT.y0 && y <= PEN_RECT.y1;
+}
+
 const GHOST_STARTS = [
-  { id: 'g_red', x: 13, y: 14, dir: 'LEFT', kind: 'chase' },
-  { id: 'g_pink', x: 12, y: 15, dir: 'UP', kind: 'ambush' },
-  { id: 'g_yellow', x: 14, y: 15, dir: 'RIGHT', kind: 'patrol' },
-  { id: 'g_green', x: 13, y: 16, dir: 'DOWN', kind: 'random' },
+  { id: 'g_red', x: 15, y: 13, dir: 'UP', kind: 'chase' },
+  { id: 'g_pink', x: 12, y: 13, dir: 'UP', kind: 'ambush' },
+  { id: 'g_yellow', x: 14, y: 13, dir: 'UP', kind: 'patrol' },
+  { id: 'g_green', x: 13, y: 13, dir: 'UP', kind: 'random' },
 ];
 
 function clamp(n, a, b) {
@@ -88,6 +103,7 @@ function nowMs() {
 
 function isWall(x, y) {
   if (y < 0 || y >= ROWS || x < 0 || x >= COLS) return true;
+  if (PEN_DOORS.has(`${x},${y}`)) return false;
   return MAZE[y][x] === '1';
 }
 
@@ -112,16 +128,13 @@ function oppositeDir(dir) {
 }
 
 /**
- * 左右ワープ（トンネル）対応：
- * - xが範囲外に出る移動を許可する場合、反対側へ回す
- * - ただし回した先が壁なら移動不可
+ * 左右ワープ（トンネル）対応
  */
 function nextCellWithWarp(pos, dir) {
   const v = dirToVec(dir);
   let nx = pos.x + v.dx;
   let ny = pos.y + v.dy;
 
-  // 左右ワープ
   if (nx < 0) nx = COLS - 1;
   if (nx >= COLS) nx = 0;
 
@@ -178,7 +191,6 @@ function chooseDirTowardTarget(g, target, opts) {
   return best;
 }
 
-// scared中：遠ざかる
 function chooseDirAwayFromTarget(g, target, opts) {
   if (!target || !opts || opts.length === 0) return g.dir || opts[0];
 
@@ -280,7 +292,6 @@ function bfsReachable(start, goal, blockedSet) {
     ];
 
     for (const n of ns) {
-      // ワープは経路計算では無視（単純化）
       if (isWall(n.x, n.y)) continue;
       const nk = `${n.x},${n.y}`;
       if (seen.has(nk)) continue;
@@ -293,35 +304,68 @@ function bfsReachable(start, goal, blockedSet) {
 }
 
 function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
-  const maxTry = 2200;
+  const maxTry = 900;
 
-  for (let attempt = 0; attempt < maxTry; attempt++) {
-    const cells = [];
-    const localForbid = new Set(forbiddenSet);
+  const isOkCell = (x, y, forbid) => {
+    if (isWall(x, y)) return false;
+    const key = `${x},${y}`;
+    if (forbid.has(key)) return false;
+    const n =
+      (isWall(x + 1, y) ? 1 : 0) +
+      (isWall(x - 1, y) ? 1 : 0) +
+      (isWall(x, y + 1) ? 1 : 0) +
+      (isWall(x, y - 1) ? 1 : 0);
+    if (n >= 3) return false;
+    return true;
+  };
 
-    let guard = 0;
-    while (cells.length < count && guard < 16000) {
-      guard++;
+  const farthestPick = (pool, k) => {
+    if (pool.length === 0) return [];
+    const picked = [];
+    picked.push(pool[Math.floor(Math.random() * pool.length)]);
 
-      const x = Math.floor(Math.random() * COLS);
-      const y = Math.floor(Math.random() * ROWS);
+    while (picked.length < k) {
+      let best = null;
+      let bestScore = -1;
 
-      if (isWall(x, y)) continue;
-      const key = `${x},${y}`;
-      if (localForbid.has(key)) continue;
+      for (const c of pool) {
+        if (picked.some((p) => p.x === c.x && p.y === c.y)) continue;
 
-      // 行き止まりは避ける
-      const n =
-        (isWall(x + 1, y) ? 1 : 0) +
-        (isWall(x - 1, y) ? 1 : 0) +
-        (isWall(x, y + 1) ? 1 : 0) +
-        (isWall(x, y - 1) ? 1 : 0);
-      if (n >= 3) continue;
+        let minD = Infinity;
+        for (const p of picked) {
+          const d = Math.abs(c.x - p.x) + Math.abs(c.y - p.y);
+          if (d < minD) minD = d;
+        }
+        if (minD > bestScore) {
+          bestScore = minD;
+          best = c;
+        }
+      }
 
-      localForbid.add(key);
-      cells.push({ x, y });
+      if (!best) break;
+      picked.push(best);
     }
 
+    return picked.slice(0, k);
+  };
+
+  for (let attempt = 0; attempt < maxTry; attempt++) {
+    const forbid = new Set(forbiddenSet);
+
+    const pool = [];
+    let guard = 0;
+    while (pool.length < 800 && guard < 20000) {
+      guard++;
+      const x = Math.floor(Math.random() * COLS);
+      const y = Math.floor(Math.random() * ROWS);
+      if (!isOkCell(x, y, forbid)) continue;
+      pool.push({ x, y });
+      forbid.add(`${x},${y}`);
+    }
+
+    if (pool.length < count) continue;
+
+    const cells = farthestPick(pool, count);
     if (cells.length < count) continue;
 
     const placed = orderCells.map((it, idx) => ({ ...it, x: cells[idx].x, y: cells[idx].y }));
@@ -333,9 +377,7 @@ function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
       const target = placed[i];
 
       const blocked = new Set();
-      for (let j = i + 1; j < placed.length; j++) {
-        blocked.add(`${placed[j].x},${placed[j].y}`);
-      }
+      for (let j = i + 1; j < placed.length; j++) blocked.add(`${placed[j].x},${placed[j].y}`);
 
       if (blocked.has(`${curPos.x},${curPos.y}`)) {
         ok = false;
@@ -353,19 +395,89 @@ function pickEmptyCellsValidated(count, forbiddenSet, orderCells, startPos) {
     if (ok) return placed.map((p) => ({ x: p.x, y: p.y }));
   }
 
-  // fallback
   const cellsFallback = [];
-  const localForbid = new Set(forbiddenSet);
+  const forbid = new Set(forbiddenSet);
   while (cellsFallback.length < count) {
     const x = Math.floor(Math.random() * COLS);
     const y = Math.floor(Math.random() * ROWS);
-    if (isWall(x, y)) continue;
-    const key = `${x},${y}`;
-    if (localForbid.has(key)) continue;
-    localForbid.add(key);
+    if (!isOkCell(x, y, forbid)) continue;
+    forbid.add(`${x},${y}`);
     cellsFallback.push({ x, y });
   }
   return cellsFallback;
+}
+
+// ===== 壁を「外周パス」にする =====
+function buildWallPaths() {
+  const isWallCell = (x, y) => {
+    if (y < 0 || y >= ROWS || x < 0 || x >= COLS) return false;
+    if (PEN_DOORS.has(`${x},${y}`)) return false;
+    return MAZE[y][x] === '1';
+  };
+
+  const edges = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!isWallCell(x, y)) continue;
+
+      if (!isWallCell(x, y - 1)) edges.push({ a: [x, y], b: [x + 1, y] });
+      if (!isWallCell(x + 1, y)) edges.push({ a: [x + 1, y], b: [x + 1, y + 1] });
+      if (!isWallCell(x, y + 1)) edges.push({ a: [x + 1, y + 1], b: [x, y + 1] });
+      if (!isWallCell(x - 1, y)) edges.push({ a: [x, y + 1], b: [x, y] });
+    }
+  }
+
+  const key = (p) => `${p[0]},${p[1]}`;
+  const map = new Map();
+  for (const e of edges) {
+    const ka = key(e.a);
+    const kb = key(e.b);
+    if (!map.has(ka)) map.set(ka, []);
+    map.get(ka).push(kb);
+  }
+
+  const paths = [];
+  const takeOneEdge = () => {
+    for (const [ka, arr] of map.entries()) {
+      if (arr.length) {
+        const kb = arr.pop();
+        return { ka, kb };
+      }
+    }
+    return null;
+  };
+
+  while (true) {
+    const first = takeOneEdge();
+    if (!first) break;
+
+    const start = first.ka;
+    let cur = first.kb;
+
+    const pts = [start, cur];
+
+    for (let guard = 0; guard < 200000; guard++) {
+      if (cur === start) break;
+      const arr = map.get(cur);
+      if (!arr || arr.length === 0) break;
+      const next = arr.pop();
+      pts.push(next);
+      cur = next;
+    }
+
+    const toXY = (k) => k.split(',').map((v) => Number(v));
+    const p0 = toXY(pts[0]);
+    let d = `M ${p0[0]} ${p0[1]}`;
+    for (let i = 1; i < pts.length; i++) {
+      const p = toXY(pts[i]);
+      d += ` L ${p[0]} ${p[1]}`;
+    }
+    d += ' Z';
+
+    paths.push(d);
+  }
+
+  return paths;
 }
 
 export default function BeforePacmanPage() {
@@ -374,7 +486,6 @@ export default function BeforePacmanPage() {
 
   const [rawList, setRawList] = useState([]);
 
-  // wave = A〜E（yearsAgoは答え、eventは問題文）
   const [wave, setWave] = useState([]);
   const [mode, setMode] = useState(null);
   const [expectedIndex, setExpectedIndex] = useState(0);
@@ -409,28 +520,28 @@ export default function BeforePacmanPage() {
 
   const eatenIdsRef = useRef(new Set());
 
-  // ===== 新要素：パワー（青）=====
+  // ===== パワー =====
   const [powerUntilMs, setPowerUntilMs] = useState(0);
   const powerUntilRef = useRef(0);
   useEffect(() => {
     powerUntilRef.current = powerUntilMs;
   }, [powerUntilMs]);
 
-  // ===== 新要素：フルーツ =====
-  const [fruit, setFruit] = useState(null); // {x,y,id,kind}
+  // ===== フルーツ =====
+  const [fruit, setFruit] = useState(null);
   const fruitRef = useRef(null);
   useEffect(() => {
     fruitRef.current = fruit;
   }, [fruit]);
 
-  // ===== 新要素：答え表示（1秒）=====
+  // ===== 答え表示（1秒）=====
   const [revealAnswersUntilMs, setRevealAnswersUntilMs] = useState(0);
   const revealRef = useRef(0);
   useEffect(() => {
     revealRef.current = revealAnswersUntilMs;
   }, [revealAnswersUntilMs]);
 
-  // ===== 倒したゴーストの復活タイマー =====
+  // ===== 倒したゴースト復活 =====
   const respawnTimersRef = useRef(new Map());
   useEffect(() => {
     return () => {
@@ -438,6 +549,13 @@ export default function BeforePacmanPage() {
       respawnTimersRef.current.clear();
     };
   }, []);
+
+  // ===== 次WAVE生成時の停止 =====
+  const [waveFreezeUntilMs, setWaveFreezeUntilMs] = useState(0);
+  const waveFreezeUntilRef = useRef(0);
+  useEffect(() => {
+    waveFreezeUntilRef.current = waveFreezeUntilMs;
+  }, [waveFreezeUntilMs]);
 
   // 盤サイズ
   const boardRef = useRef(null);
@@ -461,10 +579,33 @@ export default function BeforePacmanPage() {
     return clamp(s, 12, 22);
   }, [boardRect.w, boardRect.h]);
 
-  const pelletLabelFont = useMemo(() => clamp(Math.floor(tilePx * 0.33), 8, 11), [tilePx]);
+  const pelletLabelFont = Math.max(10, Math.floor(tilePx * 0.42));
 
-  const boardW = tilePx * COLS;
-  const boardH = tilePx * ROWS;
+  const wallPaths = useMemo(() => buildWallPaths(), []);
+
+  const wallUid = useId();
+
+  const wallStrokeBase = useMemo(() => {
+    const px = Math.max(0.9, tilePx * 0.06);
+    return px / tilePx;
+  }, [tilePx]);
+
+  const wallStrokeOuter = wallStrokeBase * 2.0;
+  const wallStrokeInner = wallStrokeBase * 1.15;
+
+  const WALL_GRAD_ID = `wallGrad-${wallUid}`;
+  const WALL_GLOW_OUTER_ID = `wallGlowOuter-${wallUid}`;
+  const WALL_GLOW_INNER_ID = `wallGlowInner-${wallUid}`;
+
+  // ===== スマホ判定（coarse pointer or touch）=====
+  const isCoarse = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      if (window.matchMedia?.('(pointer:coarse)').matches) return true;
+      if (navigator?.maxTouchPoints && navigator.maxTouchPoints > 0) return true;
+    } catch {}
+    return false;
+  }, []);
 
   // ===== プレイヤー / ゴースト =====
   const [player, setPlayer] = useState({
@@ -484,7 +625,7 @@ export default function BeforePacmanPage() {
     ghostsRef.current = ghosts;
   }, [ghosts]);
 
-  // ===== wave順序（答えバレ防止：UIにはyearsAgoを出さない）=====
+  // ===== wave順序 =====
   const ordered = useMemo(() => {
     const arr = [...(wave || [])];
     if (!mode) return arr;
@@ -492,7 +633,7 @@ export default function BeforePacmanPage() {
     return arr.sort((a, b) => a.yearsAgo - b.yearsAgo);
   }, [wave, mode]);
 
-  const expected = ordered[expectedIndex] || null;
+  const expected = ordered[0] || null;
 
   const startYears = useMemo(() => formatStartYears(mode, wave), [mode, wave]);
 
@@ -502,6 +643,11 @@ export default function BeforePacmanPage() {
     const right = arr.slice(Math.ceil(arr.length / 2));
     return { left, right };
   }, [wave]);
+
+  const isWaveFrozen = (waveFreezeUntilRef.current || 0) > Date.now();
+  const waveFreezeLeft = isWaveFrozen
+    ? Math.max(0, Math.ceil((waveFreezeUntilRef.current - Date.now()) / 1000))
+    : 0;
 
   // ===== 初期化 =====
   useEffect(() => {
@@ -530,7 +676,7 @@ export default function BeforePacmanPage() {
     load();
   }, []);
 
-  // ===== ゴースト初期化（固定スポーン）=====
+  // ===== ゴースト初期化 =====
   const resetActors = () => {
     setPlayer({ x: PLAYER_START.x, y: PLAYER_START.y, dir: 'LEFT', nextDir: 'LEFT' });
     setPowerUntilMs(0);
@@ -540,11 +686,17 @@ export default function BeforePacmanPage() {
     setRevealAnswersUntilMs(0);
     revealRef.current = 0;
 
+    setWaveFreezeUntilMs(0);
+    waveFreezeUntilRef.current = 0;
+
     const gs = GHOST_STARTS.map((g) => ({
       ...g,
-      state: 'alive', // alive | dead
-      scared: false, // このpowerで青化したか（復活個体はfalseのまま）
-      // patrol用の枠（簡易）
+      state: 'alive',
+      scared: false,
+
+      penMode: inPen(g.x, g.y),
+      leaveAt: Date.now() + 30,
+
       patrolRect: { x0: 10, x1: 17, y0: 12, y1: 18 },
       patrolPoints: [
         { x: 10, y: 12 },
@@ -558,7 +710,7 @@ export default function BeforePacmanPage() {
     setGhosts(gs);
   };
 
-  // ===== wave生成（A〜E配置）=====
+  // ===== wave生成 =====
   const makeWave = (m) => {
     const picked = pickWaveNearN(rawList, PELLET_COUNT);
 
@@ -574,19 +726,20 @@ export default function BeforePacmanPage() {
     });
 
     const forbidden = new Set();
-    forbidden.add(`${PLAYER_START.x},${PLAYER_START.y}`);
+    const pNow = playerRef.current || PLAYER_START;
+    forbidden.add(`${pNow.x},${pNow.y}`);
 
-    // ペン周りは避ける（中央箱に入らないように）
     for (let yy = PEN.y - 1; yy <= PEN.y + 1; yy++) {
       for (let xx = PEN.x - 2; xx <= PEN.x + 2; xx++) {
         forbidden.add(`${xx},${yy}`);
       }
     }
 
-    // ゴーストスポーンも避ける
-    for (const g of GHOST_STARTS) forbidden.add(`${g.x},${g.y}`);
+    for (const g of ghostsRef.current || []) {
+      if (g?.state === 'alive') forbidden.add(`${g.x},${g.y}`);
+    }
 
-    const cells = pickEmptyCellsValidated(orderForCheck.length, forbidden, orderForCheck, PLAYER_START);
+    const cells = pickEmptyCellsValidated(orderForCheck.length, forbidden, orderForCheck, pNow);
 
     const posById = new Map();
     for (let i = 0; i < orderForCheck.length; i++) {
@@ -636,11 +789,6 @@ export default function BeforePacmanPage() {
     };
   }, [status]);
 
-  const nextWave = () => {
-    setMode(null);
-    setStatus('choose');
-  };
-
   // ===== 操作 =====
   const pushDir = (dir) => {
     if (status !== 'playing') return;
@@ -661,71 +809,7 @@ export default function BeforePacmanPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [status]);
 
-  const swipeRef = useRef({ active: false, sx: 0, sy: 0, decided: false });
-
-  const decideSwipeDir = (dx, dy) => {
-    if (Math.abs(dx) < 18 && Math.abs(dy) < 18) return null;
-    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'RIGHT' : 'LEFT';
-    return dy > 0 ? 'DOWN' : 'UP';
-  };
-
-  useEffect(() => {
-    const el = boardRef.current;
-    if (!el) return;
-    if (status !== 'playing') return;
-
-    const onDown = (e) => {
-      swipeRef.current.active = true;
-      swipeRef.current.sx = e.clientX;
-      swipeRef.current.sy = e.clientY;
-      swipeRef.current.decided = false;
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {}
-      e.preventDefault?.();
-    };
-
-    const onMove = (e) => {
-      if (!swipeRef.current.active) return;
-
-      const dx = e.clientX - swipeRef.current.sx;
-      const dy = e.clientY - swipeRef.current.sy;
-
-      const d = decideSwipeDir(dx, dy);
-      if (d && !swipeRef.current.decided) {
-        swipeRef.current.decided = true;
-        pushDir(d);
-      }
-
-      if (swipeRef.current.decided && (Math.abs(dx) > 60 || Math.abs(dy) > 60)) {
-        swipeRef.current.sx = e.clientX;
-        swipeRef.current.sy = e.clientY;
-        swipeRef.current.decided = false;
-      }
-
-      e.preventDefault?.();
-    };
-
-    const onUp = (e) => {
-      swipeRef.current.active = false;
-      swipeRef.current.decided = false;
-      e.preventDefault?.();
-    };
-
-    el.addEventListener('pointerdown', onDown, { passive: false });
-    el.addEventListener('pointermove', onMove, { passive: false });
-    el.addEventListener('pointerup', onUp, { passive: false });
-    el.addEventListener('pointercancel', onUp, { passive: false });
-
-    return () => {
-      el.removeEventListener('pointerdown', onDown);
-      el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
-      el.removeEventListener('pointercancel', onUp);
-    };
-  }, [status]);
-
-  // ===== 新要素：パワー開始（この瞬間に存在するゴーストだけ青化）=====
+  // ===== パワー開始 =====
   const startPower = () => {
     const until = Date.now() + POWER_SEC * 1000;
     setPowerUntilMs(until);
@@ -739,14 +823,12 @@ export default function BeforePacmanPage() {
     );
   };
 
-  // ===== 新要素：ゴースト撃破→ペンから復活（復活個体は青じゃない）=====
+  // ===== ゴースト撃破→復活 =====
   const killGhost = (ghostId) => {
     const old = respawnTimersRef.current.get(ghostId);
     if (old) clearTimeout(old);
 
-    setGhosts((gs) =>
-      (gs || []).map((g) => (g.id === ghostId ? { ...g, state: 'dead' } : g))
-    );
+    setGhosts((gs) => (gs || []).map((g) => (g.id === ghostId ? { ...g, state: 'dead' } : g)));
 
     const tid = setTimeout(() => {
       respawnTimersRef.current.delete(ghostId);
@@ -759,7 +841,9 @@ export default function BeforePacmanPage() {
             y: PEN.y,
             dir: 'LEFT',
             state: 'alive',
-            scared: false, // ★復活は通常
+            scared: false,
+            penMode: true,
+            leaveAt: Date.now() + 30,
           };
         })
       );
@@ -768,17 +852,19 @@ export default function BeforePacmanPage() {
     respawnTimersRef.current.set(ghostId, tid);
   };
 
-  // ===== 新要素：フルーツ湧き（playing中だけ / 10秒ごと）=====
+  // ===== フルーツ湧き =====
   useEffect(() => {
     if (status !== 'playing') return;
+    if (isWaveFrozen) return;
 
     const spawn = () => {
+      if ((waveFreezeUntilRef.current || 0) > Date.now()) return;
+
       for (let t = 0; t < 2500; t++) {
         const x = Math.floor(Math.random() * COLS);
         const y = Math.floor(Math.random() * ROWS);
         if (isWall(x, y)) continue;
 
-        // ペン内は避ける
         if (Math.abs(x - PEN.x) <= 2 && Math.abs(y - PEN.y) <= 1) continue;
 
         const p = playerRef.current;
@@ -794,17 +880,29 @@ export default function BeforePacmanPage() {
           x,
           y,
           id: `fruit_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-          kind: Math.random() < 0.5 ? 'cherry' : 'apple',
+          kind: ['apple', 'cherry', 'orange', 'melon'][Math.floor(Math.random() * 4)],
         });
         return;
       }
     };
 
-    // 即湧き
     spawn();
     const id = setInterval(spawn, FRUIT_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, isWaveFrozen]);
+
+  // ===== 次WAVEを追加して停止 =====
+  const spawnNextWaveAndFreeze = () => {
+    const m = modeRef.current;
+    if (!m) return;
+
+    makeWave(m);
+
+    const until = Date.now() + WAVE_FREEZE_SEC * 1000;
+    setWaveFreezeUntilMs(until);
+    waveFreezeUntilRef.current = until;
+  };
 
   const gameOver = ({ reason, wrongPellet }) => {
     const finalScore = scoreRef.current;
@@ -830,7 +928,7 @@ export default function BeforePacmanPage() {
 
     const w = waveRef.current || [];
     const m = modeRef.current;
-    const idx = expectedIndexRef.current || 0;
+    const idx = 0;
 
     const ord = [...w].sort((a, b) => {
       if (m === 'OLD') return b.yearsAgo - a.yearsAgo;
@@ -840,7 +938,6 @@ export default function BeforePacmanPage() {
     const expectedNow = ord[idx] || null;
     const remaining = ord.slice(idx);
 
-    // ★不備報告/レビューでは yearsAgo を見せる（要求通り）
     setAnswerHistory((prev) => {
       const seen = new Set(prev.map((x) => x.question_id));
       const added = [];
@@ -892,92 +989,106 @@ export default function BeforePacmanPage() {
       const dt = Math.min(50, t - lastRef.current);
       lastRef.current = t;
 
-      // ===== パワー残り時間チェック =====
-      const isPowered = Date.now() < powerUntilRef.current;
-
-      // ===== プレイヤー / ゴースト 加速 =====
-      const pStep = isPowered ? Math.max(40, Math.floor(STEP_MS / SPEED_BOOST)) : STEP_MS;
-      const gStep = isPowered ? Math.max(60, Math.floor(GHOST_STEP_MS / SPEED_BOOST)) : GHOST_STEP_MS;
+      if ((waveFreezeUntilRef.current || 0) > Date.now()) {
+        accRef.current = { p: 0, g: 0 };
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
 
       accRef.current.p += dt;
       accRef.current.g += dt;
 
-      // ===== プレイヤー移動（タイル）=====
-      if (accRef.current.p >= pStep) {
-        accRef.current.p -= pStep;
-
-        setPlayer((p0) => {
-          let p = p0;
-
-          if (p.nextDir && canMove(p, p.nextDir)) {
-            p = { ...p, dir: p.nextDir };
-          }
-
-          if (p.dir && canMove(p, p.dir)) {
-            const n = nextCellWithWarp(p, p.dir);
-            p = { ...p, x: n.x, y: n.y };
-          }
-
-          return p;
-        });
+      {
+        const pu = powerUntilRef.current || 0;
+        if (pu > 0 && Date.now() > pu) {
+          powerUntilRef.current = 0;
+          setPowerUntilMs(0);
+          setGhosts((gs) => (gs || []).map((g) => (g.state === 'alive' ? { ...g, scared: false } : g)));
+        }
       }
 
-      // ===== ゴースト移動（タイル）=====
-      if (accRef.current.g >= gStep) {
-        accRef.current.g -= gStep;
+      {
+        const boosted = (powerUntilRef.current || 0) > Date.now();
+        const pStep = boosted ? Math.max(60, Math.floor(STEP_MS / SPEED_BOOST)) : STEP_MS;
+
+        if (accRef.current.p >= pStep) {
+          accRef.current.p -= pStep;
+
+          setPlayer((p0) => {
+            let p = p0;
+
+            if (p.nextDir && canMove(p, p.nextDir)) {
+              p = { ...p, dir: p.nextDir };
+            }
+
+            if (p.dir && canMove(p, p.dir)) {
+              const n = nextCellWithWarp(p, p.dir);
+              p = { ...p, x: n.x, y: n.y };
+            }
+
+            return p;
+          });
+        }
+      }
+
+      if (accRef.current.g >= GHOST_STEP_MS) {
+        accRef.current.g -= GHOST_STEP_MS;
 
         setGhosts((gs0) => {
-          const p = playerRef.current;
+          const gs1 = (gs0 || []).map((g0) => {
+            if (g0.state !== 'alive') return g0;
 
-          return (gs0 || []).map((g0) => {
             let g = { ...g0 };
-            if (g.state !== 'alive') return g; // 死亡中は表示しない＆動かない
+            const p = playerRef.current;
 
             let opts = choicesFrom(g);
-            if (!opts.length) return g;
+            if (opts.length === 0) return g;
 
-            const atJunction = opts.length >= 3 || !canMove(g, g.dir);
+            if (g.penMode) {
+              g.dir = chooseDirTowardTarget(g, PEN_EXIT, opts);
+            } else {
+              const atJunction = opts.length >= 3 || !canMove(g, g.dir);
 
-            // ★ power中は scared=true の個体は「逃げるAI」
-            const flee = !!g.scared && isPowered;
-
-            if (atJunction) {
-              if (flee) {
-                g.dir = chooseDirAwayFromTarget(g, { x: p.x, y: p.y }, opts);
-              } else if (g.kind === 'patrol') {
-                const rect = g.patrolRect;
-                const points = Array.isArray(g.patrolPoints) ? g.patrolPoints : [];
-                let idx = Number.isFinite(g.patrolIndex) ? g.patrolIndex : 0;
-
-                const target = points[idx] || { x: g.x, y: g.y };
-                if (g.x === target.x && g.y === target.y && points.length > 0) {
-                  idx = (idx + 1) % points.length;
-                }
-
-                const nextTarget = points[idx] || target;
-
-                // rect内に収める（壁に当たる時はfallback）
-                const inside = (x, y) =>
-                  x >= rect.x0 && x <= rect.x1 && y >= rect.y0 && y <= rect.y1;
-
-                let insideOpts = opts.filter((d) => {
-                  const n = nextCellWithWarp(g, d);
-                  return inside(n.x, n.y);
-                });
-                if (!insideOpts.length) insideOpts = opts;
-
-                g.dir = chooseDirTowardTarget(g, nextTarget, insideOpts);
-                g.patrolIndex = idx;
+              if (g.scared) {
+                if (atJunction) g.dir = chooseDirAwayFromTarget(g, { x: p.x, y: p.y }, opts);
               } else if (g.kind === 'ambush') {
-                const target = findLookaheadTarget(p, 4);
+                const target = findLookaheadTarget(p, 6);
                 g.dir = chooseDirTowardTarget(g, target, opts);
-              } else if (g.kind === 'chase') {
-                g.dir = chooseDirTowardTarget(g, { x: p.x, y: p.y }, opts);
-              } else {
-                const opp = oppositeDir(g.dir);
-                const filtered = opts.filter((d) => d !== opp);
-                const usable = filtered.length ? filtered : opts;
-                g.dir = usable[Math.floor(Math.random() * usable.length)];
+              } else if (atJunction) {
+                if (g.kind === 'patrol') {
+                  const rect = g.patrolRect;
+                  const points = Array.isArray(g.patrolPoints) ? g.patrolPoints : [];
+                  let idx = Number.isFinite(g.patrolIndex) ? g.patrolIndex : 0;
+
+                  const target = points[idx] || { x: g.x, y: g.y };
+                  if (g.x === target.x && g.y === target.y && points.length > 0) {
+                    idx = (idx + 1) % points.length;
+                  }
+
+                  const nextTarget = points[idx] || target;
+
+                  let filtered = opts.filter((d) => {
+                    const n = nextCellWithWarp(g, d);
+                    return (
+                      n.x >= rect.x0 &&
+                      n.x <= rect.x1 &&
+                      n.y >= rect.y0 &&
+                      n.y <= rect.y1 &&
+                      !isWall(n.x, n.y)
+                    );
+                  });
+                  if (filtered.length === 0) filtered = opts;
+
+                  g.dir = chooseDirTowardTarget(g, nextTarget, filtered);
+                  g.patrolIndex = idx;
+                } else if (g.kind === 'chase') {
+                  g.dir = chooseDirTowardTarget(g, { x: p.x, y: p.y }, opts);
+                } else {
+                  const opp = oppositeDir(g.dir);
+                  const filtered = opts.filter((d) => d !== opp);
+                  const usable = filtered.length ? filtered : opts;
+                  g.dir = usable[Math.floor(Math.random() * usable.length)];
+                }
               }
             }
 
@@ -997,24 +1108,46 @@ export default function BeforePacmanPage() {
               }
             }
 
+            if (g.penMode) {
+              if (!inPen(g.x, g.y) || (g.x === PEN_EXIT.x && g.y === PEN_EXIT.y)) {
+                g.penMode = false;
+              }
+            }
+
             return g;
           });
+
+          return gs1;
         });
       }
 
-      // ===== フルーツ取得判定 =====
       {
         const p = playerRef.current;
-        const fr = fruitRef.current;
-        if (fr && fr.x === p.x && fr.y === p.y) {
+        const f = fruitRef.current;
+        if (f && p.x === f.x && p.y === f.y) {
           setFruit(null);
+          fruitRef.current = null;
           const until = Date.now() + FRUIT_REVEAL_MS;
           setRevealAnswersUntilMs(until);
           revealRef.current = until;
         }
       }
 
-      // ===== A〜E取得判定（順番チェック + パワー付与）=====
+      {
+        const p = playerRef.current;
+        const gs = ghostsRef.current || [];
+        const hit = gs.find((g) => g.state === 'alive' && g.x === p.x && g.y === p.y);
+
+        if (hit) {
+          if (hit.scared) {
+            killGhost(hit.id);
+          } else {
+            gameOver({ reason: 'ゴーストに触れた' });
+            return;
+          }
+        }
+      }
+
       {
         const p = playerRef.current;
         const currentExpected = expected;
@@ -1028,20 +1161,17 @@ export default function BeforePacmanPage() {
               return;
             }
 
-            // 順番ミス
             if (pelletHere.id !== currentExpected.id) {
               eatenIdsRef.current.add(pelletHere.id);
               gameOver({ reason: '順番ミス', wrongPellet: pelletHere });
               return;
             }
 
-            // OK
             eatenIdsRef.current.add(pelletHere.id);
-
-            // 取った瞬間：5秒パワー（速度UP + ゴースト青化＆逃走UI + 触れれば倒せる）
             startPower();
 
             setWave((prev) => (prev || []).filter((q) => q.id !== pelletHere.id));
+
             setAnswerHistory((prev) => {
               const qid = `before_${pelletHere.id}`;
               if (prev.some((x) => x.question_id === qid)) return prev;
@@ -1061,35 +1191,15 @@ export default function BeforePacmanPage() {
               scoreRef.current = ns;
               return ns;
             });
-
-            setExpectedIndex((i) => i + 1);
           }
         }
       }
 
-      // ===== ゴースト接触判定 =====
-      {
-        const p = playerRef.current;
-        const gs = ghostsRef.current || [];
-
-        const hit = gs.find((g) => g.state === 'alive' && g.x === p.x && g.y === p.y);
-        if (hit) {
-          // ★ power中で「青化対象（scared=true）」なら倒せる
-          if (isPowered && hit.scared) {
-            killGhost(hit.id);
-          } else {
-            // ★復活直後（scared=false）などは power中でも即死（仕様）
-            gameOver({ reason: 'モンスターに触れた' });
-            return;
-          }
-        }
-      }
-
-      // ===== 5個食べたら次WAVE =====
       {
         const w = waveRef.current || [];
         if (modeRef.current && w.length === 0) {
-          nextWave();
+          spawnNextWaveAndFreeze();
+          rafRef.current = requestAnimationFrame(loop);
           return;
         }
       }
@@ -1102,9 +1212,726 @@ export default function BeforePacmanPage() {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-  }, [status, mode, expectedIndex]);
+  }, [status, mode, expectedIndex, expected]);
 
-  // ===== UI =====
+  // ==========================
+  // ===== UIコンポーネント =====
+  // ==========================
+  const showReveal = (revealRef.current || 0) > Date.now();
+
+  const LegendBox = (
+    <div className="bg-white/92 rounded-2xl border border-slate-200 shadow-sm p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-slate-600 font-semibold">
+            順： <span className="font-bold text-slate-900">{mode === 'OLD' ? '古い順' : '新しい順'}</span>
+            {Number.isFinite(startYears) && (
+              <span className="ml-2 text-slate-700 font-semibold">（{startYears}年前スタート）</span>
+            )}
+          </p>
+
+          <p className="mt-1 text-[10px] text-slate-600">
+            A〜E取得：5秒スピードUP / ゴースト青化（この瞬間に生存してた個体だけ）
+          </p>
+          <p className="text-[10px] text-slate-600">フルーツ：1秒だけ答え表示</p>
+          {isWaveFrozen && (
+            <p className="mt-1 text-[10px] font-bold text-indigo-700">
+              次のWAVE準備中：{waveFreezeLeft}s（停止中）
+            </p>
+          )}
+        </div>
+
+        <div className="text-right">
+          <p className="text-xs text-slate-600 font-semibold">スコア</p>
+          <p className="text-lg font-bold text-emerald-700">{score}</p>
+        </div>
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] leading-snug">
+        {[compactLegend.left, compactLegend.right].map((side, idx) => (
+          <div key={idx} className="space-y-1">
+            {side.map((q) => (
+              <div key={q.id} className="flex gap-2 items-start">
+                <span
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-full font-black"
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
+                    color: 'rgba(2,6,23,0.95)',
+                    flex: '0 0 auto',
+                  }}
+                >
+                  {q.letter}
+                </span>
+
+                <div className="min-w-0">
+                  <div className="text-slate-900 truncate" title={q.event}>
+                    {q.event}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ===== 盤面スワイプ（Board直刺し）=====
+  const gestureRef = useRef({ active: false, sx: 0, sy: 0, decided: false });
+
+  const decideDir = (dx, dy) => {
+    if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return null;
+    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'RIGHT' : 'LEFT';
+    return dy > 0 ? 'DOWN' : 'UP';
+  };
+
+  const onBoardPointerDown = (e) => {
+    if (status !== 'playing') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    gestureRef.current.active = true;
+    gestureRef.current.sx = e.clientX;
+    gestureRef.current.sy = e.clientY;
+    gestureRef.current.decided = false;
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
+    e.preventDefault?.();
+  };
+
+  const onBoardPointerMove = (e) => {
+    if (status !== 'playing') return;
+    const g = gestureRef.current;
+    if (!g.active) return;
+
+    const dx = e.clientX - g.sx;
+    const dy = e.clientY - g.sy;
+
+    const d = decideDir(dx, dy);
+    if (d && !g.decided) {
+      g.decided = true;
+      pushDir(d);
+    }
+
+    if (g.decided && (Math.abs(dx) > 55 || Math.abs(dy) > 55)) {
+      g.sx = e.clientX;
+      g.sy = e.clientY;
+      g.decided = false;
+    }
+
+    e.preventDefault?.();
+  };
+
+  const onBoardPointerUp = (e) => {
+    gestureRef.current.active = false;
+    gestureRef.current.decided = false;
+    e.preventDefault?.();
+  };
+
+  // ===== Board =====
+  const Board = ({ dim }) => {
+    const bw = tilePx * COLS;
+    const bh = tilePx * ROWS;
+
+    const t3d = (x, y) => `translate3d(${x}px, ${y}px, 0)`;
+
+    const isMobileLite = isCoarse; // coarseは軽量描画（超効く）
+
+    // ===== 壁SVG（軽量/通常 分岐）=====
+    const wallSvg = useMemo(() => {
+      if (isMobileLite) {
+  // ★スマホ：フィルタ/マスク無しで「面 + 線」だけ（軽いのに見やすい）
+  return (
+    <svg
+      className="absolute inset-0"
+      width={bw}
+      height={bh}
+      viewBox={`0 0 ${COLS} ${ROWS}`}
+      shapeRendering="geometricPrecision"
+      style={{ pointerEvents: 'none' }}
+    >
+      {/* 1) 壁の面（明るい青） */}
+      <g opacity="0.95">
+        {wallPaths.map((d, i) => (
+          <path
+            key={`mf-${i}`}
+            d={d}
+            fill="rgba(96,165,250,0.55)"   // ←ここが「中身明るい青」
+            stroke="none"
+          />
+        ))}
+      </g>
+
+      {/* 2) 外側の青ライン */}
+      <g opacity="1">
+        {wallPaths.map((d, i) => (
+          <path
+            key={`m-${i}`}
+            d={d}
+            fill="none"
+            stroke="rgba(96,165,250,1)"
+            strokeWidth={wallStrokeOuter}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        ))}
+      </g>
+
+      {/* 3) 内側の白ライン */}
+      <g opacity="0.9">
+        {wallPaths.map((d, i) => (
+          <path
+            key={`mi-${i}`}
+            d={d}
+            fill="none"
+            stroke="rgba(240,248,255,0.85)"
+            strokeWidth={wallStrokeInner}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+
+      // ★PC：豪華版（あなたの見た目）
+      return (
+        <svg
+          className="absolute inset-0"
+          width={bw}
+          height={bh}
+          viewBox={`0 0 ${COLS} ${ROWS}`}
+          shapeRendering="geometricPrecision"
+          style={{ pointerEvents: 'none' }}
+        >
+          <defs>
+            <linearGradient id={WALL_GRAD_ID} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(147,197,253,1)" />
+              <stop offset="100%" stopColor="rgba(59,130,246,1)" />
+            </linearGradient>
+
+            <filter id={WALL_GLOW_OUTER_ID} x="-70%" y="-70%" width="240%" height="240%">
+              <feGaussianBlur stdDeviation="0.18" result="b" />
+              <feColorMatrix
+                in="b"
+                type="matrix"
+                values="
+                  0 0 0 0 0.25
+                  0 0 0 0 0.60
+                  0 0 0 0 1.00
+                  0 0 0 1.35 0"
+                result="g"
+              />
+              <feMerge>
+                <feMergeNode in="g" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+
+            <filter id={`outerGlow-${wallUid}`} x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="0.22" result="b" />
+              <feColorMatrix
+                in="b"
+                type="matrix"
+                values="
+                  0 0 0 0 0.18
+                  0 0 0 0 0.50
+                  0 0 0 0 1.00
+                  0 0 0 0.90 0"
+                result="g"
+              />
+              <feMerge>
+                <feMergeNode in="g" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+
+            <filter id={WALL_GLOW_INNER_ID} x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="0.10" result="b2" />
+              <feMerge>
+                <feMergeNode in="b2" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+
+            <filter id={`wallInset-${wallUid}`} x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="0.25" result="b" />
+              <feMorphology in="b" operator="erode" radius="0.2" result="e" />
+              <feGaussianBlur in="e" stdDeviation="0.08" result="bb" />
+              <feColorMatrix
+                in="bb"
+                type="matrix"
+                values="
+                  0 0 0 0 0
+                  0 0 0 0 0
+                  0 0 0 0 0
+                  0 0 0 28 -14"
+              />
+            </filter>
+
+            <mask id={`wallSolidMask-${wallUid}`} maskUnits="userSpaceOnUse" mask-type="alpha">
+              <g filter={`url(#wallInset-${wallUid})`}>
+                {wallPaths.map((d, i) => (
+                  <path key={`ms-${i}`} d={d} fill="white" stroke="none" />
+                ))}
+              </g>
+            </mask>
+          </defs>
+
+          <g mask={`url(#wallSolidMask-${wallUid})`}>
+            <g opacity="0.9">
+              {wallPaths.map((d, i) => (
+                <path key={`fill-${i}`} d={d} fill="rgba(96,165,250,1)" stroke="none" />
+              ))}
+            </g>
+
+            <g filter={`url(#outerGlow-${wallUid})`} opacity="0.9">
+              {wallPaths.map((d, i) => (
+                <path
+                  key={`og-${i}`}
+                  d={d}
+                  fill="none"
+                  stroke="rgba(96,165,250,1)"
+                  strokeWidth={wallStrokeOuter * 1.9}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+
+            <g filter={`url(#${WALL_GLOW_OUTER_ID})`} opacity="1">
+              {wallPaths.map((d, i) => (
+                <path
+                  key={`o-${i}`}
+                  d={d}
+                  fill="none"
+                  stroke={`url(#${WALL_GRAD_ID})`}
+                  strokeWidth={wallStrokeOuter}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+
+            <g filter={`url(#${WALL_GLOW_INNER_ID})`} opacity="1">
+              {wallPaths.map((d, i) => (
+                <path
+                  key={`i-${i}`}
+                  d={d}
+                  fill="none"
+                  stroke="rgba(240,248,255,0.92)"
+                  strokeWidth={wallStrokeInner}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+          </g>
+        </svg>
+      );
+    }, [
+      bw,
+      bh,
+      isMobileLite,
+      wallUid,
+      WALL_GRAD_ID,
+      WALL_GLOW_OUTER_ID,
+      WALL_GLOW_INNER_ID,
+      wallStrokeOuter,
+      wallStrokeInner,
+      wallPaths,
+    ]);
+
+    // ===== A〜E（丸＋ラベル）=====
+// ===== A〜E（丸＋ラベル）=====
+const PelletAndLabel = ({ q }) => {
+  // ここから追加（端に近いときラベルを内側に寄せる）
+  const LABEL_W = Math.floor(tilePx * 6.6);
+  const LABEL_H = Math.floor(tilePx * 1.9); // だいたい（2行想定）
+  const PAD = Math.floor(tilePx * 0.2);
+
+  const boardW = bw; // tilePx*COLS
+  const boardH = bh; // tilePx*ROWS
+
+  // デフォは「左ちょい」「下」
+  let labelLeft = Math.floor(tilePx * -0.2);
+  let labelTop = Math.floor(tilePx * 0.95);
+
+  // 右端ではみ出すなら左へ寄せる
+  const labelAbsX = q.x * tilePx + labelLeft;
+  if (labelAbsX + LABEL_W > boardW - PAD) {
+    labelLeft = boardW - PAD - LABEL_W - q.x * tilePx;
+  }
+
+  // 左端も念のため
+  if (q.x * tilePx + labelLeft < PAD) {
+    labelLeft = PAD - q.x * tilePx;
+  }
+
+  // 下端ではみ出すなら「上に出す」
+  const labelAbsY = q.y * tilePx + labelTop;
+  if (labelAbsY + LABEL_H > boardH - PAD) {
+    labelTop = Math.floor(tilePx * -1.25); // 上側に逃がす
+  }
+  // ここまで追加
+
+  return (
+    <div
+      className="absolute"
+      style={{
+        left: 0,
+        top: 0,
+        transform: t3d(q.x * tilePx, q.y * tilePx),
+        zIndex: 10,
+        pointerEvents: 'none',
+        willChange: 'transform',
+      }}
+    >
+      <div
+        className="absolute flex items-center justify-center font-black"
+        style={{
+          left: Math.floor(tilePx * 0.15),
+          top: Math.floor(tilePx * 0.15),
+          width: Math.floor(tilePx * 0.7),
+          height: Math.floor(tilePx * 0.7),
+          borderRadius: 999,
+          background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
+          color: 'rgba(2,6,23,0.95)',
+          boxShadow: '0 4px 10px rgba(0,0,0,0.25), inset 0 0 0 2px rgba(255,255,255,0.22)',
+          fontSize: Math.max(11, Math.floor(tilePx * 0.48)),
+        }}
+        title={`${q.letter}: ${q.event}`}
+      >
+        {q.letter}
+      </div>
+
+      {showReveal && (
+        <div
+          className="absolute font-black"
+          style={{
+            left: Math.floor(tilePx * 0.05),
+            top: Math.floor(tilePx * -0.28),
+            padding: '2px 6px',
+            borderRadius: 999,
+            background: 'rgba(255,255,255,0.92)',
+            color: 'rgba(2,6,23,0.95)',
+            fontSize: Math.max(10, Math.floor(tilePx * 0.36)),
+            boxShadow: '0 6px 14px rgba(0,0,0,0.25)',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {q.yearsAgo}
+        </div>
+      )}
+
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          left: labelLeft,          // ★ここが差し替わる
+          top: labelTop,            // ★ここが差し替わる
+          width: LABEL_W,           // ★widthも合わせる
+          padding: '2px 6px',
+          borderRadius: 10,
+          fontSize: Math.max(10, pelletLabelFont),
+          lineHeight: 1.15,
+          color: 'rgba(255,255,255,0.92)',
+          background: 'rgba(0,0,0,0.40)',
+          backdropFilter: isMobileLite ? 'none' : 'blur(2px)',
+          whiteSpace: 'normal',
+          wordBreak: 'break-word',
+          boxShadow: '0 6px 14px rgba(0,0,0,0.25)',
+        }}
+      >
+        {q.event}
+      </div>
+    </div>
+  );
+};
+
+
+    // ===== プレイヤー/ゴースト/フルーツ（transform統一）=====
+    const PlayerSprite = ({ x, y }) => {
+      const bodyColor = '#ffffff';
+      const pupilColor = '#111111';
+
+      const px = Math.max(2, Math.floor(tilePx / 8));
+      const w = px * 8;
+      const h = px * 8;
+
+      const bodyBits = [
+        '00111100',
+        '01111110',
+        '11111111',
+        '11111111',
+        '11111111',
+        '11111111',
+        '01111110',
+        '00111100',
+      ];
+
+      const eyeBits = [
+        '00000000',
+        '00000000',
+        '00000000',
+        '01000010',
+        '01000010',
+        '00000000',
+        '00000000',
+        '00000000',
+      ];
+
+      const pupilBits = [
+        '00000000',
+        '00000000',
+        '00000000',
+        '01100110',
+        '01100110',
+        '00000000',
+        '00000000',
+        '00000000',
+      ];
+
+      const renderBits = (bits, color, opacity = 1, keyPrefix = 'p') =>
+        bits.flatMap((row, yy) =>
+          row.split('').map((c, xx) => {
+            if (c !== '1') return null;
+            return (
+              <div
+                key={`${keyPrefix}-${yy}-${xx}`}
+                style={{
+                  position: 'absolute',
+                  left: xx * px,
+                  top: yy * px,
+                  width: px,
+                  height: px,
+                  background: color,
+                  opacity,
+                }}
+              />
+            );
+          })
+        );
+
+      const tx = x * tilePx + Math.floor((tilePx - w) / 2);
+      const ty = y * tilePx + Math.floor((tilePx - h) / 2);
+
+      return (
+        <div
+          className="absolute"
+          style={{
+            left: 0,
+            top: 0,
+            transform: t3d(tx, ty),
+            width: w,
+            height: h,
+            zIndex: 12,
+            imageRendering: 'pixelated',
+            pointerEvents: 'none',
+            willChange: 'transform',
+          }}
+          title="player"
+        >
+          <div style={{ position: 'absolute', inset: 0, filter: isMobileLite ? 'none' : 'drop-shadow(0 6px 10px rgba(0,0,0,0.45))' }}>
+            <div style={{ position: 'absolute', inset: 0 }}>{renderBits(bodyBits, bodyColor, 1, 'body')}</div>
+          </div>
+
+          <div style={{ position: 'absolute', inset: 0 }}>{renderBits(eyeBits, '#ffffff', 0.95, 'eye')}</div>
+          <div style={{ position: 'absolute', inset: 0 }}>{renderBits(pupilBits, pupilColor, 0.9, 'pupil')}</div>
+        </div>
+      );
+    };
+
+    const GhostSprite = ({ g }) => {
+      if (g.state !== 'alive') return null;
+
+      const normal =
+        g.id === 'g_red'
+          ? '#ff4d4d'
+          : g.id === 'g_yellow'
+            ? '#ffd400'
+            : g.id === 'g_pink'
+              ? '#ff66cc'
+              : '#33dd77';
+
+      const body = g.scared ? '#3b82f6' : normal;
+
+      const px = Math.max(2, Math.floor(tilePx / 8));
+      const w = px * 8;
+      const h = px * 8;
+
+      const ghostBits = [
+        '00111100',
+        '01111110',
+        '11111111',
+        '11011011',
+        '11111111',
+        '11111111',
+        '11011011',
+        '10100101',
+      ];
+
+      const eyeBits = [
+        '00000000',
+        '00000000',
+        '00000000',
+        '00100100',
+        '00100100',
+        '00000000',
+        '00000000',
+        '00000000',
+      ];
+
+      const pupilBits = [
+        '00000000',
+        '00000000',
+        '00000000',
+        '00010000',
+        '00010000',
+        '00000000',
+        '00000000',
+        '00000000',
+      ];
+
+      const renderBits = (bits, color, opacity = 1) =>
+        bits.flatMap((row, yy) =>
+          row.split('').map((c, xx) => {
+            if (c !== '1') return null;
+            return (
+              <div
+                key={`${yy}-${xx}-${color}`}
+                style={{
+                  position: 'absolute',
+                  left: xx * px,
+                  top: yy * px,
+                  width: px,
+                  height: px,
+                  background: color,
+                  opacity,
+                }}
+              />
+            );
+          })
+        );
+
+      const tx = g.x * tilePx + Math.floor((tilePx - w) / 2);
+      const ty = g.y * tilePx + Math.floor((tilePx - h) / 2);
+
+      return (
+        <div
+          className="absolute"
+          style={{
+            left: 0,
+            top: 0,
+            transform: t3d(tx, ty),
+            width: w,
+            height: h,
+            zIndex: 11,
+            imageRendering: 'pixelated',
+            pointerEvents: 'none',
+            willChange: 'transform',
+          }}
+          title="ghost"
+        >
+          <div style={{ position: 'absolute', inset: 0, filter: isMobileLite ? 'none' : 'drop-shadow(0 6px 8px rgba(0,0,0,0.45))' }}>
+            <div style={{ position: 'absolute', inset: 0 }}>{renderBits(ghostBits, body)}</div>
+          </div>
+
+          <div style={{ position: 'absolute', inset: 0 }}>{renderBits(eyeBits, 'white', 0.95)}</div>
+          <div style={{ position: 'absolute', inset: 0 }}>{renderBits(pupilBits, '#111', 0.9)}</div>
+        </div>
+      );
+    };
+
+    const FruitSprite = ({ f }) => {
+      if (!f) return null;
+
+      const emoji =
+        f.kind === 'apple' ? '🍎' : f.kind === 'cherry' ? '🍒' : f.kind === 'orange' ? '🍊' : '🍈';
+
+      return (
+        <div
+          className="absolute"
+          style={{
+            left: 0,
+            top: 0,
+            transform: t3d(f.x * tilePx, f.y * tilePx),
+            zIndex: 10,
+            pointerEvents: 'none',
+            width: tilePx,
+            height: tilePx,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: Math.max(14, Math.floor(tilePx * 0.9)),
+            filter: isMobileLite ? 'none' : 'drop-shadow(0 6px 8px rgba(0,0,0,0.45))',
+            willChange: 'transform',
+          }}
+          title={f.kind}
+        >
+          {emoji}
+        </div>
+      );
+    };
+
+    return (
+      <div
+        ref={boardRef}
+        onPointerDown={onBoardPointerDown}
+        onPointerMove={onBoardPointerMove}
+        onPointerUp={onBoardPointerUp}
+        onPointerCancel={onBoardPointerUp}
+        className="relative rounded-2xl overflow-hidden border border-slate-700/60 shadow-lg"
+        style={{
+          width: '100%',
+          maxWidth: 520,
+          aspectRatio: `${COLS}/${ROWS}`,
+          touchAction: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+          pointerEvents: 'auto',
+          background: 'radial-gradient(120% 120% at 50% 50%, rgba(2,6,23,1) 0%, rgba(0,0,0,1) 65%)',
+
+          // ★スマホで効くやつ
+          transform: 'translateZ(0)',
+          contain: 'layout paint size',
+        }}
+      >
+        <div className="absolute inset-0" style={{ background: 'rgba(2,6,23,1)' }} />
+
+        {wallSvg}
+
+        <div
+          className="absolute inset-0"
+          style={{
+            width: bw,
+            height: bh,
+            transformOrigin: 'top left',
+            pointerEvents: 'none',
+          }}
+        >
+          {(wave || []).map((q) => (
+            <PelletAndLabel key={q.id} q={q} />
+          ))}
+          <FruitSprite f={fruit} />
+          <PlayerSprite x={player.x} y={player.y} />
+          {(ghosts || []).map((g) => (
+            <GhostSprite key={g.id} g={g} />
+          ))}
+        </div>
+
+        {dim && <div className="absolute inset-0" style={{ background: 'rgba(2,6,23,0.15)', zIndex: 30 }} />}
+
+        {isWaveFrozen && <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.12)', zIndex: 40 }} />}
+      </div>
+    );
+  };
+
+  // ===== UI分岐 =====
   if (status === 'loading') {
     return (
       <SoloLayout title="パックマン（時系列）">
@@ -1130,7 +1957,9 @@ export default function BeforePacmanPage() {
           </div>
 
           {message && (
-            <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">{message}</p>
+            <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+              {message}
+            </p>
           )}
 
           <div className="mt-3 flex flex-wrap gap-3">
@@ -1185,7 +2014,7 @@ export default function BeforePacmanPage() {
                 新しい順
               </button>
             </div>
-            <p className="mt-3 text-xs text-slate-600">次：10秒だけ問題を表示してからスタート（最初に考える時間）</p>
+            <p className="mt-3 text-xs text-slate-600">次：10秒だけ問題を表示してからスタート</p>
           </div>
 
           <div className="text-center">
@@ -1198,492 +2027,6 @@ export default function BeforePacmanPage() {
     );
   }
 
-  // ===== HUD（preview/playing共通）=====
-  const isPoweredUI = Date.now() < powerUntilMs;
-  const powerLeftMs = Math.max(0, powerUntilMs - Date.now());
-  const powerLeftSec = Math.ceil(powerLeftMs / 1000);
-
-  const revealOn = Date.now() < revealAnswersUntilMs;
-
-  const LegendBox = (
-    <div className="bg-white/92 rounded-2xl border border-slate-200 shadow-sm p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs text-slate-600 font-semibold">
-            順： <span className="font-bold text-slate-900">{mode === 'OLD' ? '古い順' : '新しい順'}</span>
-            {Number.isFinite(startYears) && (
-              <span className="ml-2 text-slate-700 font-semibold">（{startYears}年前スタート）</span>
-            )}
-          </p>
-          <p className="mt-1 text-[10px] text-slate-600">A〜E取得で5秒：移動UP + 敵が青＆逃走（ただし復活個体は青じゃない）</p>
-        </div>
-
-        <div className="text-right">
-          <p className="text-xs text-slate-600 font-semibold">スコア</p>
-          <p className="text-lg font-bold text-emerald-700">{score}</p>
-        </div>
-      </div>
-
-      {/* パワー表示 */}
-      <div className="mt-2 flex items-center justify-between text-[11px]">
-        <div className="text-slate-700">
-          パワー：
-          <span className="ml-2 font-bold" style={{ color: isPoweredUI ? '#2563eb' : '#64748b' }}>
-            {isPoweredUI ? `ON（${powerLeftSec}s）` : 'OFF'}
-          </span>
-        </div>
-        <div className="text-slate-700">
-          フルーツ：
-          <span className="ml-2 font-semibold">{fruit ? (fruit.kind === 'cherry' ? '🍒' : '🍎') : '—'}</span>
-        </div>
-      </div>
-
-      <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] leading-snug">
-        <div className="space-y-1">
-          {compactLegend.left.map((q) => (
-            <div key={q.id} className="flex gap-2 items-start">
-              <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full font-black"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
-                  color: 'rgba(2,6,23,0.95)',
-                  flex: '0 0 auto',
-                }}
-              >
-                {q.letter}
-              </span>
-              <span className="text-slate-900 truncate">
-                {q.event}
-                {revealOn && <span className="ml-2 text-emerald-700 font-black">{q.yearsAgo}</span>}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div className="space-y-1">
-          {compactLegend.right.map((q) => (
-            <div key={q.id} className="flex gap-2 items-start">
-              <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full font-black"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
-                  color: 'rgba(2,6,23,0.95)',
-                  flex: '0 0 auto',
-                }}
-              >
-                {q.letter}
-              </span>
-              <span className="text-slate-900 truncate">
-                {q.event}
-                {revealOn && <span className="ml-2 text-emerald-700 font-black">{q.yearsAgo}</span>}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {revealOn && (
-        <div className="mt-2 text-[11px] text-emerald-700 font-semibold">
-          フルーツを食べた！1秒だけ答え（年前）が表示中
-        </div>
-      )}
-    </div>
-  );
-
-  // ===== A〜E（盤面）表示：reveal中だけ yearsAgo を上に出す =====
-  const PelletAndLabel = ({ q }) => (
-    <div className="absolute" style={{ left: q.x * tilePx, top: q.y * tilePx, zIndex: 10 }}>
-      <div
-        className="absolute flex items-center justify-center font-black"
-        style={{
-          left: Math.floor(tilePx * 0.15),
-          top: Math.floor(tilePx * 0.15),
-          width: Math.floor(tilePx * 0.7),
-          height: Math.floor(tilePx * 0.7),
-          borderRadius: 999,
-          background: 'linear-gradient(180deg, rgba(250,204,21,1), rgba(245,158,11,1))',
-          color: 'rgba(2,6,23,0.95)',
-          boxShadow: '0 4px 10px rgba(0,0,0,0.25), inset 0 0 0 2px rgba(255,255,255,0.22)',
-          fontSize: Math.max(11, Math.floor(tilePx * 0.48)),
-        }}
-        title={`${q.letter}: ${q.event}`}
-      >
-        {q.letter}
-      </div>
-
-      {/* 答え表示（1秒） */}
-      {revealOn && (
-        <div
-          className="absolute whitespace-nowrap pointer-events-none font-black"
-          style={{
-            left: Math.floor(tilePx * 0.05),
-            top: -Math.floor(tilePx * 0.42),
-            fontSize: Math.max(10, Math.floor(tilePx * 0.42)),
-            color: 'rgba(16,185,129,0.95)',
-            background: 'rgba(2,6,23,0.55)',
-            padding: '1px 6px',
-            borderRadius: 999,
-            boxShadow: '0 6px 14px rgba(0,0,0,0.25)',
-          }}
-        >
-          {q.yearsAgo}
-        </div>
-      )}
-
-      <div
-        className="absolute whitespace-nowrap pointer-events-none"
-        style={{
-          left: Math.floor(tilePx * 0.05),
-          top: Math.floor(tilePx * 0.92),
-          maxWidth: tilePx * 4.2,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          fontSize: pelletLabelFont,
-          lineHeight: 1.05,
-          color: 'rgba(255,255,255,0.65)',
-          background: 'rgba(0,0,0,0.18)',
-          padding: '1px 4px',
-          borderRadius: 999,
-          backdropFilter: 'blur(2px)',
-        }}
-      >
-        {q.event}
-      </div>
-    </div>
-  );
-
-  // ===== プレイヤー（白ボール＋目）=====
-  const PlayerSprite = ({ x, y }) => {
-    const bodyColor = '#ffffff';
-    const pupilColor = '#111111';
-
-    const px = Math.max(2, Math.floor(tilePx / 8));
-    const w = px * 8;
-    const h = px * 8;
-
-    const bodyBits = [
-      '00111100',
-      '01111110',
-      '11111111',
-      '11111111',
-      '11111111',
-      '11111111',
-      '01111110',
-      '00111100',
-    ];
-
-    // 目（2点）
-    const pupilBits = [
-      '00000000',
-      '00000000',
-      '00000000',
-      '01100110',
-      '01100110',
-      '00000000',
-      '00000000',
-      '00000000',
-    ];
-
-    const renderBits = (bits, color, opacity = 1, keyPrefix = 'p') =>
-      bits.flatMap((row, yy) =>
-        row.split('').map((c, xx) => {
-          if (c !== '1') return null;
-          return (
-            <div
-              key={`${keyPrefix}-${yy}-${xx}`}
-              style={{
-                position: 'absolute',
-                left: xx * px,
-                top: yy * px,
-                width: px,
-                height: px,
-                background: color,
-                opacity,
-              }}
-            />
-          );
-        })
-      );
-
-    return (
-      <div
-        className="absolute"
-        style={{
-          left: x * tilePx + Math.floor((tilePx - w) / 2),
-          top: y * tilePx + Math.floor((tilePx - h) / 2),
-          width: w,
-          height: h,
-          zIndex: 12,
-          imageRendering: 'pixelated',
-        }}
-        title="player"
-      >
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            filter: 'drop-shadow(0 6px 10px rgba(0,0,0,0.45))',
-          }}
-        >
-          <div style={{ position: 'absolute', inset: 0 }}>{renderBits(bodyBits, bodyColor, 1, 'body')}</div>
-        </div>
-
-        <div style={{ position: 'absolute', inset: 0 }}>{renderBits(pupilBits, pupilColor, 0.9, 'pupil')}</div>
-      </div>
-    );
-  };
-
-  // ===== ゴースト（青化UI / dead非表示）=====
-  const GhostSprite = ({ g }) => {
-    if (!g || g.state !== 'alive') return null;
-
-    const isPoweredNow = Date.now() < powerUntilMs;
-    const isBlue = !!g.scared && isPoweredNow;
-
-    const body =
-      isBlue
-        ? '#2b6cff'
-        : g.id === 'g_red'
-          ? '#ff4d4d'
-          : g.id === 'g_yellow'
-            ? '#ffd400'
-            : g.id === 'g_pink'
-              ? '#ff66cc'
-              : '#33dd77';
-
-    const px = Math.max(2, Math.floor(tilePx / 8));
-    const w = px * 8;
-    const h = px * 8;
-
-    const ghostBits = [
-      '00111100',
-      '01111110',
-      '11111111',
-      '11011011',
-      '11111111',
-      '11111111',
-      '11011011',
-      '10100101',
-    ];
-
-    const eyeBits = [
-      '00000000',
-      '00000000',
-      '00000000',
-      '00100100',
-      '00100100',
-      '00000000',
-      '00000000',
-      '00000000',
-    ];
-
-    const pupilBits = [
-      '00000000',
-      '00000000',
-      '00000000',
-      '00010000',
-      '00010000',
-      '00000000',
-      '00000000',
-      '00000000',
-    ];
-
-    const renderBits = (bits, color, opacity = 1) =>
-      bits.flatMap((row, yy) =>
-        row.split('').map((c, xx) => {
-          if (c !== '1') return null;
-          return (
-            <div
-              key={`${yy}-${xx}-${color}`}
-              style={{
-                position: 'absolute',
-                left: xx * px,
-                top: yy * px,
-                width: px,
-                height: px,
-                background: color,
-                opacity,
-              }}
-            />
-          );
-        })
-      );
-
-    return (
-      <div
-        className="absolute"
-        style={{
-          left: g.x * tilePx + Math.floor((tilePx - w) / 2),
-          top: g.y * tilePx + Math.floor((tilePx - h) / 2),
-          width: w,
-          height: h,
-          zIndex: 11,
-          imageRendering: 'pixelated',
-          transform: isBlue ? 'scale(1.03)' : 'scale(1)',
-          transition: 'transform 80ms linear',
-        }}
-        title="ghost"
-      >
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            filter: 'drop-shadow(0 6px 8px rgba(0,0,0,0.45))',
-          }}
-        >
-          <div style={{ position: 'absolute', inset: 0 }}>{renderBits(ghostBits, body)}</div>
-        </div>
-
-        <div style={{ position: 'absolute', inset: 0 }}>{renderBits(eyeBits, 'white', 0.95)}</div>
-        <div style={{ position: 'absolute', inset: 0 }}>{renderBits(pupilBits, '#111', 0.9)}</div>
-
-        {isBlue && (
-          <div
-            className="absolute"
-            style={{
-              left: -Math.floor(tilePx * 0.05),
-              top: -Math.floor(tilePx * 0.55),
-              zIndex: 50,
-              fontSize: Math.max(10, Math.floor(tilePx * 0.45)),
-              color: 'rgba(37,99,235,0.95)',
-              background: 'rgba(255,255,255,0.12)',
-              padding: '1px 6px',
-              borderRadius: 999,
-              border: '1px solid rgba(255,255,255,0.18)',
-              backdropFilter: 'blur(2px)',
-              pointerEvents: 'none',
-            }}
-          >
-            RUN
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ===== フルーツ表示 =====
-  const FruitSprite = ({ fr }) => {
-    if (!fr) return null;
-    const size = Math.floor(tilePx * 0.72);
-    return (
-      <div
-        className="absolute flex items-center justify-center"
-        style={{
-          left: fr.x * tilePx + Math.floor((tilePx - size) / 2),
-          top: fr.y * tilePx + Math.floor((tilePx - size) / 2),
-          width: size,
-          height: size,
-          zIndex: 10,
-          borderRadius: 999,
-          background: 'rgba(255,255,255,0.12)',
-          boxShadow: '0 6px 14px rgba(0,0,0,0.25)',
-          backdropFilter: 'blur(2px)',
-          fontSize: Math.max(14, Math.floor(tilePx * 0.62)),
-        }}
-        title="fruit"
-      >
-        {fr.kind === 'cherry' ? '🍒' : '🍎'}
-      </div>
-    );
-  };
-
-  // ===== ペン（箱）表示 =====
-  const PenBox = () => {
-    const w = tilePx * 5;
-    const h = tilePx * 3;
-    const left = (PEN.x - 2) * tilePx;
-    const top = (PEN.y - 1) * tilePx;
-
-    return (
-      <div
-        className="absolute"
-        style={{
-          left,
-          top,
-          width: w,
-          height: h,
-          zIndex: 6,
-          borderRadius: 10,
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.25)',
-        }}
-        title="respawn"
-      />
-    );
-  };
-
-  const Board = ({ dim }) => (
-    <div
-      ref={boardRef}
-      className="relative rounded-2xl overflow-hidden border border-slate-500 shadow-lg bg-slate-950"
-      style={{
-        width: '100%',
-        maxWidth: 520,
-        aspectRatio: `${COLS}/${ROWS}`,
-        touchAction: 'none',
-        WebkitUserSelect: 'none',
-        userSelect: 'none',
-      }}
-    >
-      <div
-        className="absolute inset-0"
-        style={{
-          width: boardW,
-          height: boardH,
-          transformOrigin: 'top left',
-        }}
-      >
-        {/* tiles */}
-        {MAZE.map((row, y) =>
-          row.split('').map((c, x) => {
-            const wall = c === '1';
-            return (
-              <div
-                key={`${x},${y}`}
-                className="absolute"
-                style={{
-                  left: x * tilePx,
-                  top: y * tilePx,
-                  width: tilePx,
-                  height: tilePx,
-                  background: wall
-                    ? 'linear-gradient(180deg, rgba(30,41,59,1), rgba(15,23,42,1))'
-                    : 'rgba(2,6,23,1)',
-                  boxShadow: wall
-                    ? 'inset 0 0 0 1px rgba(255,255,255,0.06)'
-                    : 'inset 0 0 0 1px rgba(255,255,255,0.02)',
-                }}
-              />
-            );
-          })
-        )}
-
-        {/* 中央箱 */}
-        <PenBox />
-
-        {/* A〜E */}
-        {(wave || []).map((q) => (
-          <PelletAndLabel key={q.id} q={q} />
-        ))}
-
-        {/* フルーツ */}
-        <FruitSprite fr={fruit} />
-
-        {/* プレイヤー */}
-        <PlayerSprite x={player.x} y={player.y} />
-
-        {/* ゴースト */}
-        {(ghosts || []).map((g) => (
-          <GhostSprite key={g.id} g={g} />
-        ))}
-      </div>
-
-      {dim && <div className="absolute inset-0" style={{ background: 'rgba(2,6,23,0.15)', zIndex: 30 }} />}
-    </div>
-  );
-
-  // ===== preview =====
   if (status === 'preview') {
     return (
       <SoloLayout title="パックマン（時系列）">
@@ -1704,7 +2047,9 @@ export default function BeforePacmanPage() {
           <div className="mt-3 flex flex-col items-center gap-2">
             <Board dim />
 
-            <div className="text-[11px] text-slate-700 text-center">いまは準備時間（操作できません）／ 10秒後に自動で開始</div>
+            <div className="text-[11px] text-slate-700 text-center">
+              いまは準備時間（操作できません）／ 10秒後に自動で開始
+            </div>
 
             <div className="text-center">
               <Link href="/" className="text-xs text-sky-700 hover:underline">
@@ -1718,6 +2063,9 @@ export default function BeforePacmanPage() {
   }
 
   // ===== playing =====
+  const boosted = (powerUntilRef.current || 0) > Date.now();
+  const powerLeft = boosted ? Math.max(0, Math.ceil((powerUntilRef.current - Date.now()) / 1000)) : 0;
+
   return (
     <SoloLayout title="パックマン（時系列）">
       <div className="max-w-3xl mx-auto">
@@ -1727,8 +2075,9 @@ export default function BeforePacmanPage() {
             <p className="text-sm font-bold text-slate-800">{bestScore}</p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-600 font-semibold">スワイプ操作</p>
-            <p className="text-[11px] text-slate-700">盤面をスワイプ（PCは矢印キー）</p>
+            <p className="text-xs text-slate-600 font-semibold">操作</p>
+            <p className="text-[11px] text-slate-700">盤面スワイプ（PCは矢印）</p>
+            {boosted && <p className="text-[11px] font-bold text-sky-700">パワー残り {powerLeft}s</p>}
           </div>
         </div>
 
@@ -1747,4 +2096,3 @@ export default function BeforePacmanPage() {
     </SoloLayout>
   );
 }
-

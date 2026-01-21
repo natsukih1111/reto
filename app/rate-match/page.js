@@ -310,6 +310,29 @@ export default function RateMatchPage() {
     addLog('マッチングをキャンセルしました');
   };
 
+  // ★ 追加：すぐAI戦へ行く
+  const handleStartAiNow = () => {
+    // もしキューに入ってたら抜ける
+    if (socket) {
+      socket.emit('rate:leave-queue');
+    }
+    setMatching(false);
+    setMatchedInfo(null);
+
+    if (aiTimerRef.current) {
+      clearInterval(aiTimerRef.current);
+      aiTimerRef.current = null;
+    }
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+
+    addLog('AI戦を開始します');
+    // battle側で 10% の確率で AIナレキンになるので、割合は今と同じ
+    router.push('/battle?mode=ai');
+  };
+
   // matching中30秒で自動AIなつ戦へ切替
   useEffect(() => {
     if (matching) {
@@ -335,7 +358,7 @@ export default function RateMatchPage() {
           addLog('30秒経過したため、AIなつとの対戦に切り替えます');
           clearInterval(aiTimerRef.current);
           aiTimerRef.current = null;
-          router.push('/battle?mode=ai&opponent=AIなつ');
+          router.push('/battle?mode=ai');
         }
       }, 1000);
     } else {
@@ -443,12 +466,25 @@ export default function RateMatchPage() {
           </p>
 
           {!matching && !matchedInfo && (
-            <button
-              onClick={handleStart}
-              className="mt-3 w-full py-3 rounded-full bg-sky-500 text-white font-bold text-sm"
-            >
-              マッチングを開始する
-            </button>
+            <div className="mt-3 space-y-2">
+              <button
+                onClick={handleStart}
+                className="w-full py-3 rounded-full bg-sky-500 text-white font-bold text-sm"
+              >
+                マッチングを開始する
+              </button>
+
+              <button
+                onClick={handleStartAiNow}
+                className="w-full py-3 rounded-full bg-emerald-500 text-white font-bold text-sm"
+              >
+                AI戦を始める
+              </button>
+
+              <p className="text-[11px] text-slate-600 text-center">
+                ※ AI戦では、今まで通り低確率でAIナレキンが出現します
+              </p>
+            </div>
           )}
 
           {matching && (
@@ -459,12 +495,21 @@ export default function RateMatchPage() {
                 <br />
                 30秒間相手が見つからない場合は、自動でAIなつとの対戦に切り替わります。
               </p>
-              <button
-                onClick={handleCancel}
-                className="w-full py-2 rounded-full bg-slate-200 text-slate-700 text-xs"
-              >
-                キャンセル
-              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleCancel}
+                  className="py-2 rounded-full bg-slate-200 text-slate-700 text-xs font-bold"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleStartAiNow}
+                  className="py-2 rounded-full bg-emerald-500 text-white text-xs font-bold"
+                >
+                  AI戦へ
+                </button>
+              </div>
             </div>
           )}
         </div>
