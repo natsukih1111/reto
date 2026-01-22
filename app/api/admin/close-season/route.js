@@ -1,4 +1,5 @@
 // file: app/api/admin/close-season/route.js
+import { NextResponse } from 'next/server';
 import db, {
   getCurrentSeason,
   getPreviousSeason,
@@ -6,6 +7,8 @@ import db, {
   resetRatingsForNewSeason,
 } from '@/lib/db.js';
 import { addBerriesByUserId } from '@/lib/berries.js';
+
+export const runtime = 'nodejs'; // ★これが超重要（pg を確実に Node で動かす）
 
 // 共通本体
 async function handleCloseSeason() {
@@ -53,22 +56,12 @@ async function handleCloseSeason() {
             (season, user_id, rank, rating, wins, losses, best_streak)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
         `,
-        [
-          closingSeason,
-          u.user_id,
-          i + 1,
-          u.rating,
-          u.wins,
-          u.losses,
-          u.best_streak,
-        ]
+        [closingSeason, u.user_id, i + 1, u.rating, u.wins, u.losses, u.best_streak]
       );
     }
 
     // =========================
     // ② チャレンジモード シーズン集計
-    //    challenge_runs からベストを抜き出して
-    //    challenge_season_records / challenge_alltime_records に反映
     // =========================
     const challengeRows = await db.query(
       `
@@ -120,8 +113,7 @@ async function handleCloseSeason() {
 
       const isBetter =
         best_correct > existingBestCorrect ||
-        (best_correct === existingBestCorrect &&
-          best_miss < existingBestMiss);
+        (best_correct === existingBestCorrect && best_miss < existingBestMiss);
 
       if (isBetter) {
         if (existing) {
@@ -179,30 +171,24 @@ async function handleCloseSeason() {
     // =========================
     await resetRatingsForNewSeason();
 
-    return new Response(
-      JSON.stringify({
+    return NextResponse.json(
+      {
         ok: true,
         closedSeason: closingSeason,
         seasonLabel,
         message: `シーズン ${seasonLabel} (${closingSeason}) を締め切り、レート＆チャレンジ記録を新シーズン用にリセットしました。`,
-      }),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      }
+      },
+      { status: 200 }
     );
   } catch (e) {
     console.error('/api/admin/close-season error', e);
-    return new Response(
-      JSON.stringify({
+    return NextResponse.json(
+      {
         ok: false,
         error: 'server_error',
-        message: e.message || String(e),
-      }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      }
+        message: e?.message || String(e),
+      },
+      { status: 500 }
     );
   }
 }
@@ -211,7 +197,6 @@ async function handleCloseSeason() {
 export async function GET() {
   return handleCloseSeason();
 }
-
 export async function POST() {
   return handleCloseSeason();
 }

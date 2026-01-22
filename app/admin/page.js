@@ -32,26 +32,26 @@ export default function AdminDashboard() {
     setResetMessage('');
 
     try {
-      // Vercel の cron と同じエンドポイントを叩く
+      // ★GETでも動くけど、手動実行はPOSTの方が安全（キャッシュや中間層対策）
       const res = await fetch('/api/admin/close-season', {
-        method: 'GET',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       });
 
       const data = await res.json().catch(() => ({}));
 
-      if (!res.ok || data.error) {
+      if (!res.ok || data?.ok === false || data?.error) {
+        // ★ここ重要：server_error じゃなく message を出す
         setResetMessage(
-          data.error ||
-            'シーズンリセットに失敗しました。時間をおいて再度お試しください。'
+          data?.message ||
+            data?.error ||
+            `シーズンリセットに失敗しました。（status=${res.status}）`
         );
         return;
       }
 
-      const newSeasonLabel = data.newSeason
-        ? `（新シーズンコード: ${data.newSeason}）`
-        : '';
-
-      setResetMessage(`シーズン締め処理が完了しました。${newSeasonLabel}`);
+      setResetMessage('シーズン締め処理が完了しました。');
 
       // ついでに stats も軽く更新しておく（必要なら）
       setStats((prev) => ({
@@ -78,9 +78,7 @@ export default function AdminDashboard() {
         </div>
         <div className="bg-slate-900 rounded-xl p-4 border border-slate-700">
           <div className="text-xs text-slate-400 mb-1">承認待ち問題</div>
-          <div className="text-3xl font-bold">
-            {stats?.pendingQuestions ?? '--'}
-          </div>
+          <div className="text-3xl font-bold">{stats?.pendingQuestions ?? '--'}</div>
         </div>
         <div className="bg-slate-900 rounded-xl p-4 border border-slate-700">
           <div className="text-xs text-slate-400 mb-1">未対応の不備報告</div>
@@ -117,7 +115,6 @@ export default function AdminDashboard() {
             ♾ エンドレスモードを始める
           </a>
 
-          {/* ★追加：音声学習モード */}
           <a
             href="/admin/voice-learning"
             className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600"
@@ -148,9 +145,7 @@ export default function AdminDashboard() {
         </button>
 
         {resetMessage && (
-          <p className="text-xs mt-2 text-rose-200 whitespace-pre-line">
-            {resetMessage}
-          </p>
+          <p className="text-xs mt-2 text-rose-200 whitespace-pre-line">{resetMessage}</p>
         )}
       </section>
     </div>

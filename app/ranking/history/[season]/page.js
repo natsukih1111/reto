@@ -24,6 +24,38 @@ const cardStyle = {
   color: '#111827',
 };
 
+const tabContainerStyle = {
+  display: 'flex',
+  gap: '8px',
+  marginTop: '8px',
+  marginBottom: '16px',
+};
+
+const baseTab = {
+  flex: 1,
+  padding: '8px 0',
+  borderRadius: '9999px',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+  cursor: 'pointer',
+  fontSize: '14px',
+  fontWeight: 600,
+};
+
+const tabStyle = {
+  ...baseTab,
+  backgroundColor: '#e5e7eb',
+  color: '#111827',
+  borderColor: '#d1d5db',
+};
+
+const activeTabStyle = {
+  ...baseTab,
+  backgroundColor: '#111827',
+  color: '#ffffff',
+  borderColor: '#111827',
+};
+
 const tableStyle = {
   width: '100%',
   borderCollapse: 'collapse',
@@ -66,11 +98,13 @@ export default function RankingHistorySeasonPage() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('challenge');
 
   useEffect(() => {
     if (!season) return;
 
     async function load() {
+      setLoading(true);
       try {
         const res = await fetch(`/api/ranking/history/${season}`, {
           cache: 'no-store',
@@ -109,69 +143,125 @@ export default function RankingHistorySeasonPage() {
     );
   }
 
+  const rateRanking = data.rateRanking ?? [];
   const challengeRanking = data.challengeRanking ?? [];
 
   return (
     <div style={pageStyle}>
       <div style={cardStyle}>
-        <h1
-          style={{
-            fontSize: '20px',
-            fontWeight: 700,
-            marginBottom: '4px',
-          }}
-        >
+        <h1 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '4px' }}>
           {data.seasonLabel} ランキング
         </h1>
 
-        <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
-          ここでは
-          <span style={{ fontWeight: 600 }}>チャレンジモード</span>
-          のシーズンランキングを表示します。
-          <br />
-          レート戦の過去シーズンランキングは今後追加予定です。
+        <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+          {data.ymLabel ? `${data.ymLabel} の記録` : '過去シーズンの記録'}
         </p>
 
-        <h2
-          style={{
-            fontSize: '16px',
-            fontWeight: 600,
-            marginBottom: '4px',
-          }}
-        >
-          チャレンジモード TOP10
-        </h2>
+        <div style={tabContainerStyle}>
+          <button
+            type="button"
+            style={activeTab === 'rate' ? activeTabStyle : tabStyle}
+            onClick={() => setActiveTab('rate')}
+          >
+            レート戦
+          </button>
+          <button
+            type="button"
+            style={activeTab === 'challenge' ? activeTabStyle : tabStyle}
+            onClick={() => setActiveTab('challenge')}
+          >
+            チャレンジモード
+          </button>
+        </div>
 
-        <table style={tableStyle}>
-          <thead>
-            <tr>
-              <th style={thStyle}>順位</th>
-              <th style={thStyle}>名前</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>正解数</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>ミス</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>レート</th>
-            </tr>
-          </thead>
-          <tbody>
-            {challengeRanking.length === 0 && (
-              <tr>
-                <td style={tdStyle} colSpan={5}>
-                  データなし
-                </td>
-              </tr>
-            )}
+        {/* ▼ レート戦タブ */}
+        {activeTab === 'rate' && (
+          <div>
+            <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px' }}>
+              レート戦 TOP10
+            </h2>
 
-            {challengeRanking.map((u) => (
-              <tr key={u.user_id}>
-                <td style={tdStyle}>{u.rank}</td>
-                <td style={tdStyle}>{u.name}</td>
-                <td style={tdRight}>{u.best_correct}</td>
-                <td style={tdRight}>{u.best_miss}</td>
-                <td style={tdRight}>{u.rating ?? '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>順位</th>
+                  <th style={thStyle}>名前</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>レート</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>勝ち</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>負け</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rateRanking.length === 0 && (
+                  <tr>
+                    <td style={tdStyle} colSpan={5}>
+                      データなし
+                    </td>
+                  </tr>
+                )}
+
+                {rateRanking.map((u) => {
+                  const name =
+                    (u.display_name && u.display_name.trim().length > 0
+                      ? u.display_name
+                      : u.username) ||
+                    u.name ||
+                    '名無し';
+
+                  return (
+                    <tr key={u.user_id}>
+                      <td style={tdStyle}>{u.rank}</td>
+                      <td style={tdStyle}>{name}</td>
+                      <td style={tdRight}>{u.rating}</td>
+                      <td style={tdRight}>{u.wins ?? 0}</td>
+                      <td style={tdRight}>{u.losses ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ▼ チャレンジモードタブ */}
+        {activeTab === 'challenge' && (
+          <div>
+            <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px' }}>
+              チャレンジモード TOP10
+            </h2>
+
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>順位</th>
+                  <th style={thStyle}>名前</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>正解数</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>ミス</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>レート</th>
+                </tr>
+              </thead>
+              <tbody>
+                {challengeRanking.length === 0 && (
+                  <tr>
+                    <td style={tdStyle} colSpan={5}>
+                      データなし
+                    </td>
+                  </tr>
+                )}
+
+                {challengeRanking.map((u) => (
+                  <tr key={u.user_id}>
+                    <td style={tdStyle}>{u.rank}</td>
+                    <td style={tdStyle}>{u.name}</td>
+                    <td style={tdRight}>{u.best_correct}</td>
+                    <td style={tdRight}>{u.best_miss}</td>
+                    <td style={tdRight}>{u.rating ?? '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <Link href="/ranking/history" style={homeButtonStyle}>
           過去シーズン一覧に戻る
