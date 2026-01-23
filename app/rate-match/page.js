@@ -333,6 +333,17 @@ export default function RateMatchPage() {
     router.push('/battle?mode=ai');
   };
 
+  // ★ 追加：CPU戦（レート変動あり）
+  const handleStartCpu = () => {
+    if (!me) {
+      alert('CPU戦にはログインが必要です');
+      return;
+    }
+    addLog('CPU戦（レート変動あり）を開始します');
+    router.push('/battle?mode=cpu');
+  };
+
+
   // matching中30秒で自動AIなつ戦へ切替
   useEffect(() => {
     if (matching) {
@@ -480,6 +491,14 @@ export default function RateMatchPage() {
               >
                 AI戦を始める
               </button>
+
+              <button
+                onClick={handleStartCpu}
+                className="w-full py-3 rounded-full bg-indigo-600 text-white font-bold text-sm"
+              >
+                CPU戦（レート変動あり）
+              </button>
+
 
               <p className="text-[11px] text-slate-600 text-center">
                 ※ AI戦では、今まで通り低確率でAIナレキンが出現します
