@@ -1,4 +1,3 @@
-// file: app/api/submit-question/route.js
 import db from '@/lib/db.js';
 import { cookies } from 'next/headers';
 import { addBerriesByUserId } from '@/lib/berries';
@@ -28,28 +27,47 @@ async function getCurrentUser() {
   }
 }
 
-// ★ 互換：answer が JSON配列文字列で来ても || 形式に正規化する
-function normalizeAnswer(questionType, answer) {
+// ★ multi/order は correct_answer を JSON配列文字列に統一
+//   answer(旧)は互換用に || 形式で保存
+function normalizeAnswerForStorage(questionType, answer) {
   const raw = String(answer ?? '').trim();
-  if (!raw) return '';
+  if (!raw) return { legacyAnswer: '', correctAnswer: '' };
 
-  if (questionType === 'multi' || questionType === 'order') {
-    if (raw.startsWith('[') && raw.endsWith(']')) {
-      try {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          return arr
-            .map((s) => String(s ?? '').trim())
-            .filter(Boolean)
-            .join('||');
-        }
-      } catch {
-        // 失敗したらそのまま
+  const isListType = questionType === 'multi' || questionType === 'order';
+
+  if (!isListType) {
+    return { legacyAnswer: raw, correctAnswer: raw };
+  }
+
+  // JSON配列で来た場合
+  if (raw.startsWith('[') && raw.endsWith(']')) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        const cleaned = arr
+          .map((s) => String(s ?? '').trim())
+          .filter(Boolean);
+
+        return {
+          legacyAnswer: cleaned.join('||'),
+          correctAnswer: JSON.stringify(cleaned),
+        };
       }
+    } catch {
+      // 失敗したら下の || 分割へ
     }
   }
 
-  return raw;
+  // || 形式で来た場合（クライアントは今これ）
+  const cleaned = raw
+    .split('||')
+    .map((s) => String(s ?? '').trim())
+    .filter(Boolean);
+
+  return {
+    legacyAnswer: cleaned.join('||'),
+    correctAnswer: JSON.stringify(cleaned),
+  };
 }
 
 export async function POST(req) {
@@ -59,8 +77,7 @@ export async function POST(req) {
     // ★ fastMode: true のときだけ超高速（ベリー/デイリー/エンブレム等 全部スキップ）
     const fastMode = !!body.fastMode;
 
-    let { type, question, options = [], answer, tags = [], altAnswers = [] } =
-      body;
+    let { type, question, options = [], answer, tags = [], altAnswers = [] } = body;
 
     const questionText = (question || '').trim();
 
@@ -84,23 +101,43 @@ export async function POST(req) {
       ? altAnswers.map((a) => String(a ?? '').trim()).filter(Boolean)
       : [];
 
-    const questionType =
-      type || (cleanedOptions.length > 0 ? 'single' : 'text');
+    const questionType = type || (cleanedOptions.length > 0 ? 'single' : 'text');
 
-    const correctAnswer = normalizeAnswer(questionType, answer);
+    // ★ ここがポイント：multi/orderのcorrect_answerはJSON配列にする
+    const { legacyAnswer, correctAnswer } = normalizeAnswerForStorage(
+      questionType,
+      answer
+    );
 
-    // 複数選択バリデーション（|| 形式で統一）
-    if (questionType === 'multi') {
-      const parts = correctAnswer
-        .split('||')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (parts.length < 1) {
+    // 複数選択 / 並び替え バリデーション
+    if (questionType === 'multi' || questionType === 'order') {
+      let arr = [];
+      try {
+        const parsed = JSON.parse(correctAnswer);
+        if (Array.isArray(parsed)) arr = parsed;
+      } catch {
+        arr = [];
+      }
+
+      if (arr.length < 1) {
         return new Response(
           JSON.stringify({
             ok: false,
             error: 'bad_request',
-            message: '複数回答では正解を1つ以上指定してください。',
+            message:
+              questionType === 'multi'
+                ? '複数回答では正解を1つ以上指定してください。'
+                : '並び替えでは正解を2つ以上指定してください。',
+          }),
+          { status: 400 }
+        );
+      }
+      if (questionType === 'order' && arr.length < 2) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: 'bad_request',
+            message: '並び替えでは正解を2つ以上指定してください。',
           }),
           { status: 400 }
         );
@@ -128,10 +165,10 @@ export async function POST(req) {
           questionType,
           questionText,
           legacyOptions,
-          correctAnswer,
+          legacyAnswer, // ★ 旧answerは || で保存
           questionText,
           JSON.stringify(cleanedOptions),
-          correctAnswer,
+          correctAnswer, // ★ correct_answer は JSON配列文字列
           JSON.stringify(cleanedAltAnswers),
           JSON.stringify(cleanedTags),
         ]
@@ -149,8 +186,7 @@ export async function POST(req) {
     // ログインユーザー
     const currentUser = await getCurrentUser();
     const authorUserId = currentUser?.id ?? null;
-    const authorName =
-      currentUser?.display_name || currentUser?.username || null;
+    const authorName = currentUser?.display_name || currentUser?.username || null;
     const isOfficialAuthor = currentUser?.is_official_author ?? 0;
 
     const initialStatus = isOfficialAuthor ? 'approved' : 'pending';
@@ -171,12 +207,12 @@ export async function POST(req) {
         questionType,
         questionText,
         legacyOptions,
-        correctAnswer,
+        legacyAnswer, // ★ 旧answerは || で保存
         initialStatus,
         authorName,
         questionText,
         JSON.stringify(cleanedOptions),
-        correctAnswer,
+        correctAnswer, // ★ correct_answer は JSON配列文字列
         JSON.stringify(cleanedAltAnswers),
         JSON.stringify(cleanedTags),
         authorUserId,

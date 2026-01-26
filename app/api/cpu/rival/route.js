@@ -5,24 +5,17 @@ import fs from 'fs';
 import * as XLSX from 'xlsx';
 import { Pool } from 'pg';
 
-
 export const runtime = 'nodejs';
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-
 
 const RIVAL_XLSX = path.join(process.cwd(), 'data', 'rival.xlsx');
 
 function safeNum(v, fallback = null) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function clampInt(n, lo, hi) {
-  const x = Math.floor(Number(n));
-  if (!Number.isFinite(x)) return lo;
-  return Math.min(hi, Math.max(lo, x));
 }
 
 function randInt(lo, hi) {
@@ -35,12 +28,8 @@ function randInt(lo, hi) {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
 
-
 function fallbackRivals() {
-  // ここは既存のままでOK
-  return [
-    { name: 'CPUミドル', rateLow: 1400, rateHigh: 1600, accuracy: 0.4, avgTimeSec: 50, teamIds: [] },
-  ];
+  return [{ name: 'CPUミドル', rateLow: 1400, rateHigh: 1600, accuracy: 0.4, avgTimeSec: 50, teamIds: [] }];
 }
 
 function loadRivalsFromXlsx() {
@@ -51,7 +40,6 @@ function loadRivalsFromXlsx() {
 
   let wb;
   try {
-    // ★ readFile じゃなく buffer 読み（OneDrive/権限で落ちにくい）
     const buf = fs.readFileSync(RIVAL_XLSX);
     wb = XLSX.read(buf, { type: 'buffer' });
   } catch (e) {
@@ -81,19 +69,8 @@ function loadRivalsFromXlsx() {
 
       if (!name) return null;
 
-      // CPUの表示レート（ランダム）
-      const rating = Math.round((rateLow + rateHigh) / 2);
-
-      return {
-  name,
-  rateLow,
-  rateHigh,
-  // ★ rating はここでは固定しない（マッチング時に毎回決める）
-  accuracy,
-  avgTimeSec,
-  teamIds,
-};
-   })
+      return { name, rateLow, rateHigh, accuracy, avgTimeSec, teamIds };
+    })
     .filter(Boolean);
 
   if (rivals.length === 0) {
@@ -111,55 +88,50 @@ async function resolveCharactersByIds(ids) {
 
   if (clean.length === 0) return [];
 
-  // ★ characters テーブルに存在する列を調べる（存在しない列は SELECT しない）
-  const colRes = await pool.query(
-    `
+  const colRes = await pool.query(`
     SELECT column_name
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'characters'
-    `
-  );
+  `);
 
   const cols = new Set((colRes.rows || []).map((r) => String(r.column_name)));
-
   const has = (c) => cols.has(c);
 
-  // name列候補（nameが無いDBもあり得るので複数候補）
+  const keyCol = has('character_no') ? 'character_no' : has('char_no') ? 'char_no' : 'id';
+
   const nameExpr = has('name')
     ? 'name'
     : has('character_name')
     ? 'character_name'
     : has('title')
     ? 'title'
-    : 'id::text';
+    : `${keyCol}::text`;
 
-  // rarity候補（存在するやつだけ使う）
   const rarityExprParts = [];
   if (has('base_rarity')) rarityExprParts.push('base_rarity');
-  if (has('rarity')) rarityExprParts.push('rarity'); // ← rarity列があるDBならここで拾える
+  if (has('rarity')) rarityExprParts.push('rarity');
   if (has('rarity_tier')) rarityExprParts.push('rarity_tier');
   if (has('rarity_level')) rarityExprParts.push('rarity_level');
-  const rarityExpr =
-    rarityExprParts.length > 0 ? `COALESCE(${rarityExprParts.join(', ')}, 1)` : '1';
+  const rarityExpr = rarityExprParts.length > 0 ? `COALESCE(${rarityExprParts.join(', ')}, 1)` : '1';
 
-  // star候補
   const starExprParts = [];
   if (has('current_star')) starExprParts.push('current_star');
   if (has('star')) starExprParts.push('star');
   if (has('stars')) starExprParts.push('stars');
   if (has('current_stars')) starExprParts.push('current_stars');
-  const starExpr =
-    starExprParts.length > 0 ? `COALESCE(${starExprParts.join(', ')}, 1)` : '1';
+  if (has('awakening')) starExprParts.push('awakening');
+  if (has('awaken')) starExprParts.push('awaken');
+  const starExpr = starExprParts.length > 0 ? `COALESCE(${starExprParts.join(', ')}, 1)` : '1';
 
   const sql = `
     SELECT
-      id,
+      ${keyCol} AS id,
       ${nameExpr} AS name,
       ${rarityExpr} AS rarity,
       ${starExpr} AS star
     FROM characters
-    WHERE id = ANY($1::int[])
+    WHERE ${keyCol} = ANY($1::int[])
   `;
 
   const { rows } = await pool.query(sql, [clean]);
@@ -168,22 +140,15 @@ async function resolveCharactersByIds(ids) {
   return clean.map((id) => map.get(id)).filter(Boolean);
 }
 
-
-
 function pickCpuByRating(rivals, myRating) {
   const r = Number(myRating);
   const candidates = rivals.filter((x) => r >= x.rateLow && r <= x.rateHigh);
-  const pool = candidates.length ? candidates : rivals;
+  const poolArr = candidates.length ? candidates : rivals;
 
-  const picked = pool[Math.floor(Math.random() * pool.length)];
-
-  // ★ この試合のCPUレートを範囲内でランダム生成
+  const picked = poolArr[Math.floor(Math.random() * poolArr.length)];
   const cpuRating = randInt(picked.rateLow, picked.rateHigh);
 
-  return {
-    ...picked,
-    rating: cpuRating,
-  };
+  return { ...picked, rating: cpuRating };
 }
 
 export async function GET(req) {
@@ -194,7 +159,6 @@ export async function GET(req) {
     const { rivals, source } = loadRivalsFromXlsx();
     const cpu = pickCpuByRating(rivals, myRating);
 
-    // ★ CPUチーム解決
     const cpuTeam = await resolveCharactersByIds(cpu.teamIds || []);
 
     return NextResponse.json({
@@ -205,7 +169,7 @@ export async function GET(req) {
         rating: cpu.rating ?? 1500,
         accuracy: cpu.accuracy ?? 0.4,
         avgTimeSec: cpu.avgTimeSec ?? 50,
-        team: cpuTeam, // ← battle 側でそのまま表示できる
+        team: cpuTeam,
       },
     });
   } catch (e) {

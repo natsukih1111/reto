@@ -1,7 +1,7 @@
 // file: app/battle/page_inner.js
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import io from 'socket.io-client';
 import QuestionReviewAndReport from '@/components/QuestionReviewAndReport';
@@ -225,6 +225,20 @@ const [myTeam, setMyTeam] = useState([]); // CPUマッチング画面用：自�
 
   const [result, setResult] = useState(null);
   const [log, setLog] = useState([]);
+  // ★ CPU戦：離脱による二重確定防止フラグ
+  const cpuFinalizedRef = useRef(false);
+  // ★離脱時に最新のスコア等でforfeit送るためのスナップショット
+  const cpuSnapshotRef = useRef({
+    phase: 'waiting',
+    myUserId: null,
+    roomId: '',
+    cpuProfile: null,
+    myScore: 0,
+    oppScore: 0,
+    myTime: 0,
+    oppTime: 0,
+  });
+
 
   // 不備報告用：各問題の履歴
   const [answerHistory, setAnswerHistory] = useState([]);
@@ -236,9 +250,80 @@ const [myTeam, setMyTeam] = useState([]); // CPUマッチング画面用：自�
   const qType = getQuestionType(currentQuestion);
 
   const addLog = (msg) => setLog((prev) => [...prev, msg]);
+  // ★ CPU戦：離脱(切断)を強制敗北として確定する
+  function sendCpuFinalizeForfeit() {
+    if (!isCpuMode) return;
+
+    const snap = cpuSnapshotRef.current;
+
+    if (!snap?.myUserId) return;
+    if (!snap?.cpuProfile) return;
+
+        // ★ cpu-matching でも「離脱＝負け」にしたいならここに含める
+    if (!(snap.phase === 'question' || snap.phase === 'waiting-opponent' || snap.phase === 'cpu-matching')) return;
+
+
+    if (cpuFinalizedRef.current) return;
+    cpuFinalizedRef.current = true;
+
+    const payload = {
+      userId: snap.myUserId,
+      roomId: snap.roomId,
+      cpu: { name: snap.cpuProfile.name, rating: snap.cpuProfile.rating },
+      scoreUser: snap.myScore,
+      scoreCpu: snap.oppScore,
+      totalTimeUser: snap.myTime,
+      totalTimeCpu: snap.oppTime,
+      forfeit: true,
+    };
+
+    console.log('[CPU forfeit] sending', payload);
+    addLog(`CPU forfeit send: phase=${snap.phase} room=${payload.roomId} user=${payload.userId}`);
+
+
+    try {
+      if (navigator?.sendBeacon) {
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        const ok = navigator.sendBeacon('/api/cpu/finalize', blob);
+        if (ok) return;
+      }
+    } catch {}
+
+    fetch('/api/cpu/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  // ★ CPU戦：この画面から離脱する時は必ずforfeit送ってから遷移
+  const leaveBattle = (to = '/') => {
+    if (isCpuMode) {
+      // ここで同期で叩く（SPA遷移でも確実に発火させる）
+      sendCpuFinalizeForfeit();
+    }
+    router.push(to);
+  };
+
 
   // ★ me のIDを統一
   const myUserId = me?.id ?? me?.user_id ?? me?.userId ?? null;
+
+  // ★常に最新値をrefへ（アンマウント時に使う）
+  useEffect(() => {
+    cpuSnapshotRef.current = {
+      phase,
+      myUserId,
+      roomId,
+      cpuProfile,
+      myScore,
+      oppScore,
+      myTime,
+      oppTime,
+    };
+  }, [phase, myUserId, roomId, cpuProfile, myScore, oppScore, myTime, oppTime]);
+
 
   // 不備報告用：履歴追加
   const pushHistory = (userAnswerText) => {
@@ -497,6 +582,37 @@ useEffect(() => {
 
     boot();
   }, [isCpuMode, questions, phase, myUserId, me?.rating]);
+
+  // ★ CPU戦：ページ離脱を拾って強制敗北にする
+  useEffect(() => {
+    if (!isCpuMode) return;
+
+    const onPageHide = () => sendCpuFinalizeForfeit();
+    const onBeforeUnload = () => sendCpuFinalizeForfeit();
+    const onVisibilityChange = () => {
+      // iOS系で pagehide 取り逃がすケース対策
+      if (document.visibilityState === 'hidden') sendCpuFinalizeForfeit();
+    };
+
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isCpuMode, phase, myUserId, cpuProfile, myScore, oppScore, myTime, oppTime, roomId]);
+
+  // ★SPA遷移（アプリ内で別ページへ移動）でも確実に発火させる：アンマウント時
+  useEffect(() => {
+    return () => {
+      sendCpuFinalizeForfeit();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCpuMode]);
+
 
   // ★ CPUマッチングのカウントダウン制御
   useEffect(() => {
@@ -831,6 +947,7 @@ useEffect(() => {
 
     try {
       if (myUserId && cpuProfile) {
+      cpuFinalizedRef.current = true;
         await fetch('/api/cpu/finalize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1104,7 +1221,7 @@ useEffect(() => {
           <p className="mb-2">ルームIDが指定されていません。</p>
           <button
             className="px-4 py-2 rounded-full bg-sky-500 text-white text-sm font-bold"
-            onClick={() => router.push('/')}
+            onClick={() => leaveBattle('/')}
           >
             ホームへ戻る
           </button>
@@ -1412,7 +1529,7 @@ useEffect(() => {
 
               <button
                 className="mt-2 px-4 py-2 rounded-full bg-sky-600 text-white text-sm font-bold"
-                onClick={() => router.push('/')}
+                onClick={() => leaveBattle('/')}
               >
                 ホームへ戻る
               </button>
